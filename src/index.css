@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg-deep: #0d0e12;
+  --color-card-dark: #161920;
+  --color-border-subtle: #242936;
+  --color-accent-purple: #a855f7;
+  --color-accent-green: #22c55e;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-bg-deep);
+    color: #ffffff;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+}
