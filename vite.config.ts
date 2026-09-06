@@ -6,6 +6,7 @@ import { createLibraryMiddleware } from './src/server/libraryMiddleware';
 
 export default defineConfig(() => {
   return {
+    base: './',
     plugins: [
       react(),
       tailwindcss(),
