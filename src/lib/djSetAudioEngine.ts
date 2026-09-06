@@ -237,6 +237,46 @@ export class DjSetAudioEngine {
     if (this.audioB) this.audioB.currentTime = Math.max(0, sec);
   }
 
+  /**
+   * Nudges the beatgrid / playback phase of a deck in milliseconds
+   */
+  public nudgeBeatgrid(deck: 'A' | 'B', offsetMs: number) {
+    const audio = deck === 'A' ? this.audioA : this.audioB;
+    const track = deck === 'A' ? this.currentDeckATrack : this.currentDeckBTrack;
+    if (audio) {
+      const shiftSec = offsetMs / 1000;
+      audio.currentTime = Math.max(0, audio.currentTime + shiftSec);
+      if (track) {
+        track.beatgridOffsetMs = (track.beatgridOffsetMs || 0) + offsetMs;
+      }
+    }
+  }
+
+  /**
+   * Auto-phase locks Deck B's beat phase to Deck A's beat phase
+   */
+  public autoPhaseAlign(bpmA: number = 130, bpmB: number = 130) {
+    if (!this.audioA || !this.audioB) return;
+    const secondsPerBeatA = 60 / bpmA;
+    const secondsPerBeatB = 60 / bpmB;
+
+    // Phase in current beat (0.0 to 1.0)
+    const phaseA = (this.audioA.currentTime % secondsPerBeatA) / secondsPerBeatA;
+    const currentPhaseB = (this.audioB.currentTime % secondsPerBeatB) / secondsPerBeatB;
+
+    // Phase difference
+    let diffPhase = phaseA - currentPhaseB;
+    if (diffPhase > 0.5) diffPhase -= 1.0;
+    if (diffPhase < -0.5) diffPhase += 1.0;
+
+    const shiftSec = diffPhase * secondsPerBeatB;
+    this.audioB.currentTime = Math.max(0, this.audioB.currentTime + shiftSec);
+
+    if (this.currentDeckBTrack) {
+      this.currentDeckBTrack.beatgridOffsetMs = (this.currentDeckBTrack.beatgridOffsetMs || 0) + Math.round(shiftSec * 1000);
+    }
+  }
+
   public getAudioElements() {
     return { audioA: this.audioA, audioB: this.audioB };
   }
@@ -270,16 +310,19 @@ export class DjSetAudioEngine {
     const totalTransitionDurationSec = durationBeats * secondsPerBeat;
     const elapsedSec = p * totalTransitionDurationSec;
 
+    const offsetA = ((this.currentDeckATrack?.beatgridOffsetMs || 0) / 1000);
+    const offsetB = ((this.currentDeckBTrack?.beatgridOffsetMs || 0) / 1000);
+
     // Both audio elements track the elapsed transition time
     if (this.audioA && this.audioA.src) {
-      const targetTimeA = Math.max(0, sourceMixOutSec + elapsedSec);
+      const targetTimeA = Math.max(0, sourceMixOutSec + elapsedSec + offsetA);
       if (Math.abs(this.audioA.currentTime - targetTimeA) > 0.3) {
         this.audioA.currentTime = targetTimeA;
       }
     }
 
     if (this.audioB && this.audioB.src) {
-      const targetTimeB = Math.max(0, targetMixInSec + (elapsedSec * (bpmA / bpmB)));
+      const targetTimeB = Math.max(0, targetMixInSec + (elapsedSec * (bpmA / bpmB)) + offsetB);
       if (Math.abs(this.audioB.currentTime - targetTimeB) > 0.3) {
         this.audioB.currentTime = targetTimeB;
       }

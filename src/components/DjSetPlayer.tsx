@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, RotateCcw, Volume2, Music, Sparkles, ChevronRight, ChevronLeft, Zap, Sliders, Waves, Scissors, Gauge } from 'lucide-react';
+import { Play, Pause, RotateCcw, Volume2, Music, Sparkles, ChevronRight, ChevronLeft, Zap, Sliders, Waves, Scissors, Gauge, Activity } from 'lucide-react';
 import { TrackDef, TransitionConfig, TransitionPresetType } from '../types';
 import { globalDjSetEngine, TransitionState } from '../lib/djSetAudioEngine';
 import { evaluateKeyCompatibility, calculateTempoSync } from '../lib/djMixerLogic';
+import BeatgridRepairModal from './BeatgridRepairModal';
 
 interface DjSetPlayerProps {
   deckATrack: TrackDef | null;
@@ -11,6 +12,7 @@ interface DjSetPlayerProps {
   transitions: TransitionConfig[];
   onSelectTransition: (t: TransitionConfig) => void;
   onOpenTrackAnalysis?: (track: TrackDef) => void;
+  onTrackUpdated?: (track: TrackDef) => void;
 }
 
 export const PRESET_META: Record<TransitionPresetType, { name: string; icon: any; color: string; desc: string }> = {
@@ -53,11 +55,13 @@ export default function DjSetPlayer({
   transitions,
   onSelectTransition,
   onOpenTrackAnalysis,
+  onTrackUpdated,
 }: DjSetPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [crossfaderProgress, setCrossfaderProgress] = useState(0); // 0.0 -> 1.0
   const [transitionState, setTransitionState] = useState<TransitionState | null>(null);
   const [isAutoTransitioning, setIsAutoTransitioning] = useState(false);
+  const [repairModalTrack, setRepairModalTrack] = useState<{ track: TrackDef; reference?: TrackDef } | null>(null);
   const autoTransitionRef = useRef<number | null>(null);
 
   const activePreset: TransitionPresetType = activeTransition?.preset || 'bass-swap';
@@ -242,9 +246,18 @@ export default function DjSetPlayer({
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-1">
                 <span className="text-xs font-bold text-white truncate max-w-[150px]">{deckATrack.title}</span>
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
-                  {deckATrack.bpm} BPM
-                </span>
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
+                    {deckATrack.bpm} BPM
+                  </span>
+                  <button
+                    onClick={() => setRepairModalTrack({ track: deckATrack, reference: deckBTrack || undefined })}
+                    className="p-1 rounded bg-[#0D0E12] border border-[#242936] text-cyan-400 hover:bg-cyan-500/20 hover:border-cyan-500/50 transition-colors"
+                    title="Deck A Taktgitter & Beatgrid reparieren"
+                  >
+                    <Activity className="w-3 h-3" />
+                  </button>
+                </div>
               </div>
               <div className="flex items-center justify-between text-[10px] text-gray-400 mt-0.5">
                 <span className="truncate max-w-[130px]">{deckATrack.artist}</span>
@@ -365,20 +378,36 @@ export default function DjSetPlayer({
             </span>
           </div>
 
-          {/* Audition Button */}
-          <button
-            onClick={triggerAutoTransition}
-            disabled={!deckATrack || !deckBTrack}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold tracking-wider uppercase transition-all shadow-md ${
-              isAutoTransitioning 
-                ? 'bg-purple-600 text-white animate-pulse shadow-[0_0_15px_rgba(168,85,247,0.6)]' 
-                : 'bg-[#242936] text-purple-300 hover:bg-purple-600/30 hover:text-white'
-            }`}
-            title="Spielt den Übergang automatisch mit der konfigurierten Taktlänge durch"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-            <span>Mix Testen</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                if (deckATrack && deckBTrack) {
+                  globalDjSetEngine.autoPhaseAlign(deckATrack.bpm, deckBTrack.bpm);
+                }
+              }}
+              disabled={!deckATrack || !deckBTrack}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold tracking-wider bg-[#161920] border border-[#242936] text-cyan-300 hover:bg-cyan-500/20 hover:border-cyan-500/50 hover:text-white transition-all shadow-md disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Taktgitter & Phase der beiden Tracks synchronisieren (Auto-Phase Lock)"
+            >
+              <Activity className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Phase Sync</span>
+            </button>
+
+            {/* Audition Button */}
+            <button
+              onClick={triggerAutoTransition}
+              disabled={!deckATrack || !deckBTrack}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold tracking-wider uppercase transition-all shadow-md ${
+                isAutoTransitioning 
+                  ? 'bg-purple-600 text-white animate-pulse shadow-[0_0_15px_rgba(168,85,247,0.6)]' 
+                  : 'bg-[#242936] text-purple-300 hover:bg-purple-600/30 hover:text-white'
+              }`}
+              title="Spielt den Übergang automatisch mit der konfigurierten Taktlänge durch"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+              <span>Mix Testen</span>
+            </button>
+          </div>
         </div>
 
         {/* Center: Interactive Crossfader Rail */}
@@ -470,9 +499,18 @@ export default function DjSetPlayer({
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-1">
                 <span className="text-xs font-bold text-white truncate max-w-[150px]">{deckBTrack.title}</span>
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                  {deckBTrack.bpm} BPM
-                </span>
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                    {deckBTrack.bpm} BPM
+                  </span>
+                  <button
+                    onClick={() => setRepairModalTrack({ track: deckBTrack, reference: deckATrack || undefined })}
+                    className="p-1 rounded bg-[#0D0E12] border border-[#242936] text-emerald-400 hover:bg-emerald-500/20 hover:border-emerald-500/50 transition-colors"
+                    title="Deck B Taktgitter & Beatgrid reparieren"
+                  >
+                    <Activity className="w-3 h-3" />
+                  </button>
+                </div>
               </div>
               <div className="flex items-center justify-between text-[10px] text-gray-400 mt-0.5">
                 <span className="truncate max-w-[130px]">{deckBTrack.artist}</span>
@@ -548,6 +586,21 @@ export default function DjSetPlayer({
           </div>
         )}
       </div>
+
+      {/* Beatgrid Repair Studio Modal */}
+      {repairModalTrack && (
+        <BeatgridRepairModal
+          track={repairModalTrack.track}
+          referenceTrack={repairModalTrack.reference}
+          onSave={(updated) => {
+            if (onTrackUpdated) {
+              onTrackUpdated(updated);
+            }
+            setRepairModalTrack(null);
+          }}
+          onClose={() => setRepairModalTrack(null)}
+        />
+      )}
 
     </div>
   );

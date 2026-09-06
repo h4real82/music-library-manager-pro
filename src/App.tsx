@@ -1214,6 +1214,7 @@ export default function App() {
               onSeek={handleSetSeek}
               onTogglePlay={handleSetTogglePlay}
               onAutomix={handleAutomix}
+              onTrackUpdated={(updated) => updateTrack(updated.id, updated)}
             />
           )}
         </div>
@@ -1289,6 +1290,7 @@ export default function App() {
           transitions={setTransitions}
           onSelectTransition={(t) => setActiveTransitionId(t.id)}
           onOpenTrackAnalysis={(t) => setActiveTrackForAnalysis(t)}
+          onTrackUpdated={(updated) => updateTrack(updated.id, updated)}
         />
       ) : (
         <div className="fixed bottom-0 left-0 right-0 h-20 bg-[#161920] border-t border-[#242936] px-6 flex items-center justify-between z-50 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">

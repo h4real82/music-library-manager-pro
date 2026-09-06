@@ -207,6 +207,10 @@ export interface TrackDef {
   spatial?: SpatialData;
   tempoVariation?: TempoVariationData;
   onlineMetadata?: OnlineMetadataInfo;
+  // DJ Beatgrid & Timeline Offset Extensions
+  beatgridOffsetMs?: number;
+  bpmFineTune?: number;
+  timelineOffsetSec?: number;
 }
 
 export interface ChapterDef {

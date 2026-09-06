@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Play, Pause, RotateCcw, Sliders, Zap, Waves, Scissors, Gauge, Clock, Music, ZoomIn, ZoomOut, Maximize2, Sparkles, ChevronRight, Wand2 } from 'lucide-react';
+import { Play, Pause, RotateCcw, Sliders, Zap, Waves, Scissors, Gauge, Clock, Music, ZoomIn, ZoomOut, Maximize2, Sparkles, ChevronRight, Wand2, Activity, MoveHorizontal, GripVertical } from 'lucide-react';
 import { TrackDef, TransitionConfig, TransitionPresetType } from '../types';
-import { evaluateKeyCompatibility, calculateTempoSync, evaluateEnvelope, generateHarmonizedSet } from '../lib/djMixerLogic';
+import { evaluateKeyCompatibility, calculateTempoSync, evaluateEnvelope, generateHarmonizedSet, generateDefaultEnvelopes } from '../lib/djMixerLogic';
 import { PRESET_META } from './DjSetPlayer';
+import BeatgridRepairModal from './BeatgridRepairModal';
 
 interface WaveformTimelineProps {
   tracks: TrackDef[];
@@ -16,6 +17,32 @@ interface WaveformTimelineProps {
   onSeek?: (timeSec: number) => void;
   onTogglePlay?: () => void;
   onAutomix?: (orderedTracks: TrackDef[], newTransitions: TransitionConfig[]) => void;
+  onTransitionsChange?: (transitions: TransitionConfig[]) => void;
+  onTrackUpdated?: (track: TrackDef) => void;
+}
+
+interface TrackLayout {
+  track: TrackDef;
+  index: number;
+  startSec: number;
+  durationSec: number;
+  endSec: number;
+  outgoingTransition?: TransitionConfig;
+  incomingTransition?: TransitionConfig;
+}
+
+interface TransitionOverlapZone {
+  transition: TransitionConfig;
+  sourceLayout: TrackLayout;
+  targetLayout: TrackLayout;
+  overlapStartSec: number;
+  overlapEndSec: number;
+  overlapDurationSec: number;
+  overlapStartPx: number;
+  overlapWidthPx: number;
+  topPx: number;
+  heightPx: number;
+  keyComp: any;
 }
 
 export default function WaveformTimeline({
@@ -30,21 +57,30 @@ export default function WaveformTimeline({
   onSeek,
   onTogglePlay,
   onAutomix,
+  onTransitionsChange,
+  onTrackUpdated,
 }: WaveformTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(1.0); // 0.4x to 2.5x
 
-  // Compute start and end times for each track in the set based on transitions overlap
-  interface TrackLayout {
-    track: TrackDef;
-    index: number;
-    startSec: number;
-    durationSec: number;
-    endSec: number;
-    outgoingTransition?: TransitionConfig;
-    incomingTransition?: TransitionConfig;
-  }
+  // Manual slip / timing offsets for each track (in seconds)
+  const [trackOffsets, setTrackOffsets] = useState<Record<string, number>>({});
 
+  // Waveform Drag & Slip State
+  const [draggingTrackId, setDraggingTrackId] = useState<string | null>(null);
+  const [dragStartX, setDragStartX] = useState<number>(0);
+  const [activeDragDeltaSec, setActiveDragDeltaSec] = useState<number>(0);
+
+  // Beatgrid Repair Modal State
+  const [beatgridRepairModal, setBeatgridRepairModal] = useState<{
+    track: TrackDef;
+    reference?: TrackDef | null;
+  } | null>(null);
+
+  // Pixels per second calculation
+  const pxPerSec = 2.2 * zoomLevel;
+
+  // Compute start and end times for each track in the set based on transitions overlap & manual offsets
   const trackLayouts: TrackLayout[] = useMemo(() => {
     const layouts: TrackLayout[] = [];
     let currentAccumulatedTime = 0;
@@ -52,9 +88,8 @@ export default function WaveformTimeline({
     for (let i = 0; i < tracks.length; i++) {
       const track = tracks[i];
       const duration = track.duration || 180;
-
-      // Find transition from track i to track i+1
       const nextTrack = tracks[i + 1];
+
       let transitionDurationSec = 30; // default 30s
       let outTrans: TransitionConfig | undefined;
 
@@ -69,7 +104,9 @@ export default function WaveformTimeline({
         }
       }
 
-      const startSec = currentAccumulatedTime;
+      // Incorporate manual timeline slip offset
+      const manualOffset = (trackOffsets[track.id] || 0) + (draggingTrackId === track.id ? activeDragDeltaSec : 0);
+      const startSec = Math.max(0, currentAccumulatedTime + manualOffset);
       const endSec = startSec + duration;
 
       layouts.push({
@@ -84,13 +121,64 @@ export default function WaveformTimeline({
       currentAccumulatedTime = nextTrack ? endSec - transitionDurationSec : endSec;
     }
     return layouts;
-  }, [tracks, transitions]);
+  }, [tracks, transitions, trackOffsets, draggingTrackId, activeDragDeltaSec]);
 
-  const totalSetDurationSec = trackLayouts.length > 0 ? trackLayouts[trackLayouts.length - 1].endSec : 300;
+  // Compute unified transition overlap zones that span ACROSS BOTH LANES
+  const overlapZones: TransitionOverlapZone[] = useMemo(() => {
+    const zones: TransitionOverlapZone[] = [];
+    const LANE_HEIGHT = 112; // h-28 is 112px
+    const LANE_GAP = 8;     // gap-2 is 8px
+    const PADDING_TOP = 12; // p-3 is 12px
 
-  // Pixels per second calculation
-  const pxPerSec = 2.2 * zoomLevel;
-  const totalTimelineWidthPx = Math.max(1000, totalSetDurationSec * pxPerSec + 200);
+    for (let i = 0; i < trackLayouts.length - 1; i++) {
+      const layoutA = trackLayouts[i];
+      const layoutB = trackLayouts[i + 1];
+
+      // Overlap occurs when layoutA.endSec > layoutB.startSec
+      if (layoutA.endSec > layoutB.startSec) {
+        const overlapStartSec = layoutB.startSec;
+        const overlapEndSec = Math.min(layoutA.endSec, layoutB.endSec);
+        const overlapDurationSec = Math.max(0, overlapEndSec - overlapStartSec);
+
+        if (overlapDurationSec > 0) {
+          const found = transitions.find(t => t.sourceTrackId === layoutA.track.id && t.targetTrackId === layoutB.track.id);
+          const trans: TransitionConfig = found || {
+            id: `tr-${layoutA.track.id}-${layoutB.track.id}`,
+            sourceTrackId: layoutA.track.id,
+            targetTrackId: layoutB.track.id,
+            sourceSlotId: 'outro',
+            targetSlotId: 'intro',
+            durationBeats: Math.max(8, Math.round(overlapDurationSec / (60 / (layoutA.track.bpm || 130)))),
+            preset: 'bass-swap' as TransitionPresetType,
+            envelopes: generateDefaultEnvelopes('bass-swap', 32),
+          };
+
+          const keyComp = evaluateKeyCompatibility(layoutA.track.key, layoutB.track.key);
+
+          zones.push({
+            transition: trans,
+            sourceLayout: layoutA,
+            targetLayout: layoutB,
+            overlapStartSec,
+            overlapEndSec,
+            overlapDurationSec,
+            overlapStartPx: overlapStartSec * pxPerSec,
+            overlapWidthPx: overlapDurationSec * pxPerSec,
+            topPx: PADDING_TOP + (i * (LANE_HEIGHT + LANE_GAP)),
+            heightPx: (LANE_HEIGHT * 2) + LANE_GAP, // Spans both Lane i and Lane i+1!
+            keyComp,
+          });
+        }
+      }
+    }
+    return zones;
+  }, [trackLayouts, pxPerSec]);
+
+  const totalSetDurationSec = trackLayouts.length > 0 
+    ? Math.max(...trackLayouts.map(l => l.endSec), 300) 
+    : 300;
+
+  const totalTimelineWidthPx = Math.max(1200, totalSetDurationSec * pxPerSec + 350);
 
   const formatTime = (sec: number) => {
     const m = Math.floor(sec / 60);
@@ -112,8 +200,72 @@ export default function WaveformTimeline({
     onAutomix(result.orderedTracks, result.transitions);
   };
 
+  // --- Waveform Horizontal Drag & Slip Handlers ---
+  const handleWaveformPointerDown = (e: React.PointerEvent, trackId: string) => {
+    e.stopPropagation();
+    try {
+      (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    } catch {}
+    setDraggingTrackId(trackId);
+    setDragStartX(e.clientX);
+    setActiveDragDeltaSec(0);
+  };
+
+  const handleWaveformPointerMove = (e: React.PointerEvent) => {
+    if (!draggingTrackId) return;
+    const deltaPx = e.clientX - dragStartX;
+    let deltaSec = deltaPx / pxPerSec;
+
+    // Phrase snap (4-beat bars by default, hold Shift for smooth free slip)
+    const track = tracks.find(t => t.id === draggingTrackId);
+    const bpm = track?.bpm || 130;
+    const barSec = (60 / bpm) * 4;
+
+    if (!e.shiftKey && barSec > 0) {
+      deltaSec = Math.round(deltaSec / barSec) * barSec;
+    }
+
+    setActiveDragDeltaSec(deltaSec);
+  };
+
+  const handleWaveformPointerUp = (e: React.PointerEvent) => {
+    if (!draggingTrackId) return;
+    const trackId = draggingTrackId;
+    const finalDeltaSec = activeDragDeltaSec;
+
+    setTrackOffsets(prev => ({
+      ...prev,
+      [trackId]: (prev[trackId] || 0) + finalDeltaSec,
+    }));
+
+    setDraggingTrackId(null);
+    setActiveDragDeltaSec(0);
+
+    // If onTransitionsChange is provided, update durationBeats for affected transitions
+    if (onTransitionsChange && overlapZones.length > 0) {
+      const updatedTransitions = transitions.map(tr => {
+        const zone = overlapZones.find(z => z.transition.id === tr.id);
+        if (zone) {
+          const srcTrack = tracks.find(t => t.id === tr.sourceTrackId);
+          const bpm = srcTrack?.bpm || 130;
+          const beats = Math.max(8, Math.round(zone.overlapDurationSec / (60 / bpm)));
+          return {
+            ...tr,
+            durationBeats: beats,
+          };
+        }
+        return tr;
+      });
+      onTransitionsChange(updatedTransitions);
+    }
+  };
+
   return (
-    <div className="flex-1 flex flex-col bg-[#0A0C10] overflow-hidden select-none relative">
+    <div 
+      className="flex-1 flex flex-col bg-[#0A0C10] overflow-hidden select-none relative"
+      onPointerMove={handleWaveformPointerMove}
+      onPointerUp={handleWaveformPointerUp}
+    >
       
       {/* ================= TIMELINE TOOLBAR ================= */}
       <div className="h-12 px-6 border-b border-[#242936] bg-[#0F1116] flex items-center justify-between z-20 shrink-0">
@@ -147,12 +299,17 @@ export default function WaveformTimeline({
             <span>•</span>
             <span>{tracks.length} Tracks</span>
             <span>•</span>
-            <span>{transitions.length} Übergänge</span>
+            <span>{overlapZones.length} Übergänge</span>
           </div>
         </div>
 
-        {/* Automix & Zoom Controls */}
+        {/* Automix, Grid Mode & Zoom Controls */}
         <div className="flex items-center gap-3">
+          <div className="hidden lg:flex items-center gap-1 text-[10px] font-mono text-gray-400 bg-[#161920] px-2.5 py-1 rounded-lg border border-[#242936]">
+            <MoveHorizontal className="w-3 h-3 text-purple-400" />
+            <span>Wellenform packen zum Verschieben (Shift = freie Phase)</span>
+          </div>
+
           {onAutomix && tracks.length >= 2 && (
             <button
               onClick={handleAutomixClick}
@@ -231,44 +388,36 @@ export default function WaveformTimeline({
             </div>
           </div>
 
-          {/* Vertical Playhead Across All Lanes */}
+          {/* Vertical Playhead Needle Across All Lanes */}
           <div 
             className="absolute top-9 bottom-0 w-[2px] bg-red-500 z-30 pointer-events-none drop-shadow-[0_0_10px_rgba(239,68,68,1)] transition-[left] duration-75"
             style={{ left: `${currentTime * pxPerSec}px` }}
           />
 
-          {/* ================= TRACK LANES ================= */}
-          <div className="flex flex-col gap-2 p-3">
+          {/* ================= TRACK LANES CONTAINER ================= */}
+          <div className="relative p-3 flex flex-col gap-2">
+
+            {/* TRACK LANES */}
             {trackLayouts.map((layout, idx) => {
               const track = layout.track;
               const leftPx = layout.startSec * pxPerSec;
               const widthPx = layout.durationSec * pxPerSec;
-              const nextLayout = trackLayouts[idx + 1];
+              const isDraggingThis = draggingTrackId === track.id;
 
-              // Key compatibility with next track
-              const keyComp = nextLayout ? evaluateKeyCompatibility(track.key, nextLayout.track.key) : null;
-              const outTrans = layout.outgoingTransition;
-              const isTransitionActive = outTrans && outTrans.id === activeTransitionId;
-
-              // Overlap calculations
-              let overlapWidthPx = 0;
-              let overlapStartPx = 0;
-              if (outTrans && nextLayout) {
-                const bpm = track.bpm || 130;
-                const overlapDurationSec = outTrans.durationBeats * (60 / bpm);
-                overlapWidthPx = overlapDurationSec * pxPerSec;
-                overlapStartPx = (layout.endSec - overlapDurationSec) * pxPerSec;
-              }
-
-              // Real or Authentic 3-Band Waveform Peak Generation
+              // Waveform Peak Slices
               const sliceCount = Math.min(320, Math.max(60, Math.floor(widthPx / 3.5)));
               const bpm = track.bpm || 130;
               const beatIntervalSec = 60 / bpm;
+              const beatgridOffsetSec = (track.beatgridOffsetMs || 0) / 1000;
 
               return (
                 <div 
                   key={track.id} 
-                  className="relative h-28 bg-[#12141A] border border-[#242936] rounded-xl overflow-hidden group shadow-lg flex items-center"
+                  className={`relative h-28 bg-[#12141A] border rounded-xl overflow-hidden group shadow-lg flex items-center transition-colors ${
+                    isDraggingThis 
+                      ? 'border-purple-400 shadow-[0_0_20px_rgba(168,85,247,0.3)] bg-[#171922]' 
+                      : 'border-[#242936] hover:border-gray-600'
+                  }`}
                 >
                   {/* Left Track Info Strip (Sticky Left Anchor) */}
                   <div className="sticky left-0 w-64 h-full bg-[#161920]/95 border-r border-[#242936] p-2.5 z-20 flex items-center gap-3 backdrop-blur-md shadow-md shrink-0">
@@ -293,40 +442,69 @@ export default function WaveformTimeline({
                     <div className="min-w-0 flex-1">
                       <div className="text-xs font-bold text-white truncate max-w-[130px]">{track.title}</div>
                       <div className="text-[10px] text-gray-400 truncate max-w-[120px]">{track.artist}</div>
-                      <div className="flex items-center gap-1.5 mt-1 font-mono text-[9px]">
+                      
+                      <div className="flex items-center gap-1.5 mt-1 font-mono text-[9px] flex-wrap">
                         <span className="px-1 py-0.2 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 font-bold">
                           {track.bpm} BPM
                         </span>
                         <span className="px-1 py-0.2 rounded bg-purple-500/10 text-purple-400 border border-purple-500/30 font-bold">
                           {track.key}
                         </span>
-                        <span className="text-gray-500">{formatTime(layout.durationSec)}</span>
+
+                        {/* Beatgrid Repair Quick Button */}
+                        <button
+                          onClick={() => setBeatgridRepairModal({
+                            track,
+                            reference: trackLayouts[idx + 1]?.track || trackLayouts[idx - 1]?.track || null
+                          })}
+                          className="px-1.5 py-0.2 rounded bg-[#202534] hover:bg-purple-600 text-gray-300 hover:text-white border border-[#2F3648] transition-colors flex items-center gap-0.5"
+                          title="Taktgitter / Phase reparieren"
+                        >
+                          <Activity className="w-2.5 h-2.5 text-purple-400" />
+                          <span>Gitter</span>
+                        </button>
                       </div>
                     </div>
                   </div>
 
-                  {/* Horizontal Waveform Strip across Time */}
+                  {/* ================= DRAGGABLE WAVEFORM STRIP ================= */}
                   <div 
-                    className="absolute top-1 bottom-1 rounded-lg overflow-hidden border border-cyan-500/20 bg-[#0B0D12] flex items-center cursor-pointer"
+                    data-waveform-strip="true"
+                    className={`waveform-lane-grab absolute top-1 bottom-1 rounded-lg overflow-hidden border bg-[#0B0D12] flex items-center transition-shadow ${
+                      isDraggingThis
+                        ? 'border-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.5)] cursor-grabbing'
+                        : 'border-cyan-500/20 hover:border-cyan-400/50 cursor-grab'
+                    }`}
                     style={{ left: `${leftPx}px`, width: `${widthPx}px` }}
-                    onClick={(e) => {
-                      if (!onSeek) return;
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      const clickX = e.clientX - rect.left;
-                      const seekSetTime = layout.startSec + (clickX / widthPx) * layout.durationSec;
-                      onSeek(seekSetTime);
-                    }}
-                    title={`Klick: Zu Track #${layout.index} springen`}
+                    onPointerDown={(e) => handleWaveformPointerDown(e, track.id)}
+                    title="Gedrückt halten & ziehen: Wellenform horizontal auf der Zeitleiste verschieben"
                   >
+                    {/* Visual Beatgrid Markers Overlay */}
+                    <div className="absolute inset-0 pointer-events-none opacity-40">
+                      {Array.from({ length: Math.min(120, Math.floor(layout.durationSec / beatIntervalSec)) }).map((_, bIdx) => {
+                        const bTime = (bIdx * beatIntervalSec) + beatgridOffsetSec;
+                        const bLeftPct = (bTime / layout.durationSec) * 100;
+                        const isDownbeat = bIdx % 4 === 0;
+
+                        return (
+                          <div
+                            key={bIdx}
+                            className={`absolute top-0 bottom-0 ${isDownbeat ? 'w-[1.5px] bg-red-400/80' : 'w-[1px] bg-white/20'}`}
+                            style={{ left: `${bLeftPct}%` }}
+                          />
+                        );
+                      })}
+                    </div>
+
                     {/* Authentic 3-Band Multi-Frequency Waveform Slices */}
                     <div className="w-full h-full flex items-center px-1">
                       {Array.from({ length: sliceCount }).map((_, sIdx) => {
                         const sliceTime = (sIdx / sliceCount) * layout.durationSec;
-                        const beatPhase = ((sliceTime / beatIntervalSec) % 1 + 1) % 1;
-                        const isDownbeat = (Math.floor(sliceTime / beatIntervalSec) % 4 === 0);
+                        const relBeatTime = sliceTime - beatgridOffsetSec;
+                        const beatPhase = ((relBeatTime / beatIntervalSec) % 1 + 1) % 1;
+                        const isDownbeat = (Math.floor(relBeatTime / beatIntervalSec) % 4 === 0);
                         const kickTransient = Math.max(0, 1 - beatPhase * 3.2);
 
-                        // Energy envelope based on segments or natural structure
                         let energyMultiplier = 0.85;
                         if (track.segments && track.segments.length > 0) {
                           const seg = track.segments.find(s => sliceTime >= s.startSec && sliceTime <= s.endSec);
@@ -343,10 +521,6 @@ export default function WaveformTimeline({
 
                         const totalHeightPct = Math.min(94, Math.max(12, (lowAmp * 0.5 + midAmp * 0.3 + highAmp * 0.2) * 100));
 
-                        // Spectral Color Gradient:
-                        // Strong kick downbeat = Orange/Red
-                        // Mids = Yellow/Amber
-                        // Highs = Cyan/Blue
                         const isKickSlice = kickTransient > 0.45;
                         const barColor = isKickSlice
                           ? 'bg-gradient-to-t from-red-600 via-orange-400 to-amber-300'
@@ -366,97 +540,209 @@ export default function WaveformTimeline({
                     </div>
 
                     {/* Track start/end cue flags */}
-                    <div className="absolute top-1 left-2 px-1.5 py-0.2 bg-black/70 rounded text-[9px] font-mono text-cyan-300 border border-cyan-500/30 backdrop-blur-sm pointer-events-none">
-                      START: {formatTime(layout.startSec)}
+                    <div className="absolute top-1 left-2 flex items-center gap-1.5 bg-black/80 px-2 py-0.5 rounded text-[9px] font-mono text-cyan-300 border border-cyan-500/30 backdrop-blur-sm pointer-events-none">
+                      <GripVertical className="w-3 h-3 text-purple-400" />
+                      <span>START: {formatTime(layout.startSec)}</span>
+                      {isDraggingThis && (
+                        <span className="text-amber-300 font-bold ml-1">
+                          ({activeDragDeltaSec >= 0 ? `+${activeDragDeltaSec.toFixed(1)}` : activeDragDeltaSec.toFixed(1)}s)
+                        </span>
+                      )}
                     </div>
                   </div>
-
-                  {/* ================= WAVEFORM TRANSITION OVERLAP ZONE & ENVELOPE PREVIEW ================= */}
-                  {outTrans && nextLayout && overlapWidthPx > 0 && (
-                    <div 
-                      onClick={() => onOpenTransitionStudio(outTrans)}
-                      className={`absolute top-0 bottom-0 z-30 border-2 rounded-xl cursor-pointer transition-all flex flex-col justify-between p-2 group/zone ${
-                        isTransitionActive 
-                          ? 'border-purple-400 bg-purple-950/50 shadow-[0_0_24px_rgba(168,85,247,0.6)] ring-2 ring-purple-500/50' 
-                          : 'border-cyan-400/80 bg-cyan-950/30 hover:border-purple-400 hover:bg-purple-950/40'
-                      }`}
-                      style={{ left: `${overlapStartPx}px`, width: `${overlapWidthPx}px` }}
-                      title="Klick: 3-Band EQ Hüllkurven-Editor öffnen"
-                    >
-                      {/* Top Overlap Header */}
-                      <div className="flex items-center justify-between z-10">
-                        <div className="flex items-center gap-1.5 bg-black/80 px-2 py-0.5 rounded-md border border-[#242936] text-[10px] font-mono font-bold text-white">
-                          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-                          <span>ÜBERGANG: {outTrans.preset.toUpperCase()}</span>
-                          <span className="text-cyan-400">({outTrans.durationBeats} Beats)</span>
-                        </div>
-
-                        {keyComp && (
-                          <div className={`px-2 py-0.5 rounded-md text-[9px] font-mono font-bold border ${
-                            keyComp.type === 'perfect' 
-                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' 
-                              : 'bg-purple-500/20 text-purple-300 border-purple-500/40'
-                          }`}>
-                            {keyComp.label}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* 3-Band EQ Envelope Mini-Preview (Waveform SVG Overlay) */}
-                      <div className="w-full h-12 relative my-auto pointer-events-none opacity-90 group-hover/zone:opacity-100">
-                        <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 40">
-                          {/* Low / Bass Curve (Orange) */}
-                          <path
-                            d={outTrans.preset === 'bass-swap' 
-                              ? 'M 0 5 L 48 5 L 50 35 L 100 35' 
-                              : 'M 0 5 L 75 5 L 80 35 L 100 35'}
-                            fill="none"
-                            stroke="#F97316"
-                            strokeWidth="2.5"
-                          />
-                          {/* Mid Curve (Yellow) */}
-                          <path
-                            d="M 0 8 L 30 8 L 70 24 L 100 35"
-                            fill="none"
-                            stroke="#EAB308"
-                            strokeWidth="2"
-                            strokeDasharray="2 1"
-                          />
-                          {/* High Curve (Blue) */}
-                          <path
-                            d="M 0 10 L 25 10 L 80 28 L 100 35"
-                            fill="none"
-                            stroke="#06B6D4"
-                            strokeWidth="2"
-                          />
-                        </svg>
-                      </div>
-
-                      {/* Bottom Prompt / Edit Trigger */}
-                      <button
-                        id={`btn-edit-envelope-${outTrans.id}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onOpenTransitionStudio(outTrans);
-                        }}
-                        className="flex items-center justify-between text-[9px] font-mono text-gray-200 bg-black/80 hover:bg-purple-900/80 px-2 py-1 rounded-md z-30 transition-colors w-full border border-purple-500/30"
-                      >
-                        <span className="text-cyan-300 flex items-center gap-1 font-bold">
-                          <Sliders className="w-3 h-3 text-purple-400" />
-                          <span>Hüllkurven bearbeiten</span>
-                        </span>
-                        <ChevronRight className="w-3 h-3 text-purple-400 group-hover/zone:translate-x-1 transition-transform" />
-                      </button>
-                    </div>
-                  )}
 
                 </div>
               );
             })}
+
+            {/* ================= UNIFIED TRANSITION BOUNDING FRAMES SPANNING BOTH LANES ================= */}
+            {overlapZones.map((zone, zIdx) => {
+              const trans = zone.transition;
+              const isTransitionActive = trans.id === activeTransitionId;
+
+              return (
+                <div
+                  key={`unified-frame-${trans.id}-${zIdx}`}
+                  className={`absolute z-30 rounded-2xl border-2 transition-all pointer-events-auto backdrop-blur-[1px] flex flex-col justify-between p-3 group/frame ${
+                    isTransitionActive
+                      ? 'border-purple-400 bg-purple-950/25 shadow-[0_0_35px_rgba(168,85,247,0.5)] ring-2 ring-purple-500/50'
+                      : 'border-cyan-400/90 bg-cyan-950/20 hover:border-purple-400 hover:bg-purple-950/30 shadow-[0_0_25px_rgba(6,182,212,0.25)]'
+                  }`}
+                  style={{
+                    top: `${zone.topPx}px`,
+                    left: `${zone.overlapStartPx}px`,
+                    width: `${Math.max(160, zone.overlapWidthPx)}px`,
+                    height: `${zone.heightPx}px`,
+                  }}
+                  onClick={() => {
+                    onSelectTransition(trans);
+                  }}
+                >
+                  {/* TOP HEADER: TRANSITION INFO & BUTTONS */}
+                  <div className="flex items-center justify-between z-20 gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 bg-black/90 px-2.5 py-1 rounded-lg border border-[#242936] text-[10px] font-mono font-bold text-white shadow-md">
+                      <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                      <span>ÜBERGANG: {trans.preset.toUpperCase()}</span>
+                      <span className="text-cyan-400 font-black">({trans.durationBeats} Beats • {zone.overlapDurationSec.toFixed(1)}s)</span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      {zone.keyComp && (
+                        <div className={`px-2 py-0.5 rounded-lg text-[9px] font-mono font-bold border ${
+                          zone.keyComp.type === 'perfect' 
+                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' 
+                            : 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+                        }`}>
+                          {zone.keyComp.label}
+                        </div>
+                      )}
+
+                      {/* Quick Beatgrid Repair Button in Overlap Frame */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setBeatgridRepairModal({
+                            track: zone.targetLayout.track,
+                            reference: zone.sourceLayout.track,
+                          });
+                        }}
+                        className="p-1 bg-black/80 hover:bg-purple-600 rounded text-gray-300 hover:text-white border border-[#242936] transition-colors"
+                        title="Taktgitter beider Tracks abgleichen"
+                      >
+                        <Activity className="w-3 h-3 text-cyan-400" />
+                      </button>
+
+                      {/* Open Waveform Transition Overlap Studio */}
+                      <button
+                        id={`btn-edit-envelope-${trans.id}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenTransitionStudio(trans);
+                        }}
+                        className="flex items-center gap-1 bg-purple-600 hover:bg-purple-500 text-white px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold shadow-md transition-all hover:scale-105 active:scale-95"
+                        title="Waveform Transition Overlap Studio öffnen"
+                      >
+                        <Sliders className="w-3 h-3 text-cyan-300" />
+                        <span>Hüllkurven</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* ================= 3-BAND EQ LINES ON BOTH WAVEFORMS ================= */}
+                  <div className="flex-1 flex flex-col justify-between py-1 my-1 relative pointer-events-none">
+                    
+                    {/* UPPER SECTION: DECK A (OUTGOING TRACK) 3-BAND CURVES */}
+                    <div className="relative h-14 w-full flex flex-col justify-center">
+                      <div className="absolute top-0 left-1 text-[8px] font-mono font-bold text-gray-300 bg-black/75 px-1.5 py-0.2 rounded border border-white/10 z-10">
+                        DECK A ({zone.sourceLayout.track.title})
+                      </div>
+
+                      <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 40">
+                        {/* Outgoing Bass Curve (Orange) */}
+                        <path
+                          d={trans.preset === 'bass-swap' 
+                            ? 'M 0 6 L 48 6 L 50 36 L 100 36' 
+                            : 'M 0 6 L 65 6 L 85 36 L 100 36'}
+                          fill="none"
+                          stroke="#F97316"
+                          strokeWidth="3"
+                        />
+                        {/* Outgoing Mid Curve (Yellow) */}
+                        <path
+                          d="M 0 12 L 30 12 L 70 28 L 100 36"
+                          fill="none"
+                          stroke="#EAB308"
+                          strokeWidth="2.5"
+                          strokeDasharray="3 1.5"
+                        />
+                        {/* Outgoing High Curve (Cyan) */}
+                        <path
+                          d="M 0 18 L 25 18 L 80 32 L 100 36"
+                          fill="none"
+                          stroke="#06B6D4"
+                          strokeWidth="2.5"
+                        />
+                      </svg>
+                    </div>
+
+                    {/* HORIZONTAL TRANSITION SEPARATOR */}
+                    <div className="w-full border-t border-dashed border-purple-400/40 my-0.5" />
+
+                    {/* LOWER SECTION: DECK B (INCOMING TRACK) 3-BAND CURVES */}
+                    <div className="relative h-14 w-full flex flex-col justify-center">
+                      <div className="absolute top-0 left-1 text-[8px] font-mono font-bold text-gray-300 bg-black/75 px-1.5 py-0.2 rounded border border-white/10 z-10">
+                        DECK B ({zone.targetLayout.track.title})
+                      </div>
+
+                      <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 40">
+                        {/* Incoming Bass Curve (Orange) */}
+                        <path
+                          d={trans.preset === 'bass-swap' 
+                            ? 'M 0 36 L 48 36 L 50 6 L 100 6' 
+                            : 'M 0 36 L 15 36 L 35 6 L 100 6'}
+                          fill="none"
+                          stroke="#F97316"
+                          strokeWidth="3"
+                        />
+                        {/* Incoming Mid Curve (Yellow) */}
+                        <path
+                          d="M 0 36 L 30 36 L 70 20 L 100 12"
+                          fill="none"
+                          stroke="#EAB308"
+                          strokeWidth="2.5"
+                          strokeDasharray="3 1.5"
+                        />
+                        {/* Incoming High Curve (Cyan) */}
+                        <path
+                          d="M 0 36 L 20 36 L 75 22 L 100 18"
+                          fill="none"
+                          stroke="#06B6D4"
+                          strokeWidth="2.5"
+                        />
+                      </svg>
+                    </div>
+
+                  </div>
+
+                  {/* BOTTOM FOOTER: EQ FREQUENCY LEGEND */}
+                  <div className="flex items-center justify-between text-[8px] font-mono bg-black/85 px-2 py-1 rounded-md border border-[#242936] text-gray-300">
+                    <span className="flex items-center gap-1 text-orange-400 font-bold">
+                      <span className="w-2 h-2 rounded-full bg-orange-500 inline-block" />
+                      <span>Tief / Bass</span>
+                    </span>
+                    <span className="flex items-center gap-1 text-yellow-400 font-bold">
+                      <span className="w-2 h-2 rounded-full bg-yellow-400 inline-block" />
+                      <span>Mitten</span>
+                    </span>
+                    <span className="flex items-center gap-1 text-cyan-400 font-bold">
+                      <span className="w-2 h-2 rounded-full bg-cyan-400 inline-block" />
+                      <span>Höhen</span>
+                    </span>
+                  </div>
+
+                </div>
+              );
+            })}
+
           </div>
 
         </div>
       </div>
+
+      {/* ================= BEATGRID REPAIR MODAL ================= */}
+      {beatgridRepairModal && (
+        <BeatgridRepairModal
+          track={beatgridRepairModal.track}
+          referenceTrack={beatgridRepairModal.reference}
+          onSave={(updated) => {
+            if (onTrackUpdated) {
+              onTrackUpdated(updated);
+            }
+            setBeatgridRepairModal(null);
+          }}
+          onClose={() => setBeatgridRepairModal(null)}
+        />
+      )}
 
     </div>
   );

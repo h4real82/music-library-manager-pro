@@ -23,6 +23,7 @@ interface GraphMapProps {
   onSeek?: (timeSec: number) => void;
   onTogglePlay?: () => void;
   onAutomix?: (orderedTracks: Track[], newTransitions: TransitionConfig[]) => void;
+  onTrackUpdated?: (track: Track) => void;
 }
 
 interface Point {
@@ -71,6 +72,7 @@ export default function GraphMap({
   onSeek,
   onTogglePlay,
   onAutomix,
+  onTrackUpdated,
 }: GraphMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -106,9 +108,23 @@ export default function GraphMap({
   const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
-  // Slot-to-Slot Edge Drawing
+  // Slot-to-Slot Edge Drawing & Armed Connection Mode
   const [drawingPort, setDrawingPort] = useState<DraggingPortState | null>(null);
+  const [armedSourcePort, setArmedSourcePort] = useState<DraggingPortState | null>(null);
   const [currentCanvasMouse, setCurrentCanvasMouse] = useState<Point>({ x: 0, y: 0 });
+  const dragStartClientPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Escape key cancels armed connection
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setArmedSourcePort(null);
+        setDrawingPort(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   // Active Transition Config Modal / Popover on edge
   const [editingTransition, setEditingTransition] = useState<TransitionConfig | null>(null);
@@ -184,7 +200,7 @@ export default function GraphMap({
       return;
     }
 
-    if (drawingPort) {
+    if (drawingPort || armedSourcePort) {
       const canvasPt = screenToCanvas(e.clientX, e.clientY);
       setCurrentCanvasMouse(canvasPt);
     }
@@ -204,7 +220,10 @@ export default function GraphMap({
   const handleContainerPointerUp = () => {
     setIsPanning(false);
     setDraggingNode(null);
-    setDrawingPort(null);
+    if (drawingPort) {
+      setArmedSourcePort(drawingPort);
+      setDrawingPort(null);
+    }
   };
 
   // Zoom HUD actions
@@ -308,45 +327,29 @@ export default function GraphMap({
     return 0;
   };
 
-  const handlePortPointerDown = (e: React.PointerEvent, track: Track, slot: TrackSlotInfo, isRight: boolean) => {
-    e.stopPropagation();
-    const canvasPt = screenToCanvas(e.clientX, e.clientY);
-    setDrawingPort({
-      trackId: track.id,
-      slotId: slot.id,
-      slotName: slot.name,
-      slotNumber: slot.slotNumber,
-      timeSec: slot.timeSec,
-      isRight,
-      startPos: canvasPt,
-    });
-    setCurrentCanvasMouse(canvasPt);
-  };
-
-  const handlePortPointerUp = (e: React.PointerEvent, targetTrack: Track, targetSlot: TrackSlotInfo) => {
-    e.stopPropagation();
-    if (!drawingPort) return;
-
+  const connectSlots = (source: DraggingPortState, targetTrack: Track, targetSlot: TrackSlotInfo) => {
     // Do not connect to self
-    if (drawingPort.trackId === targetTrack.id) {
+    if (source.trackId === targetTrack.id) {
       setDrawingPort(null);
+      setArmedSourcePort(null);
       return;
     }
 
-    const sourceTrack = tracks.find(t => t.id === drawingPort.trackId);
+    const sourceTrack = tracks.find(t => t.id === source.trackId);
     if (!sourceTrack) {
       setDrawingPort(null);
+      setArmedSourcePort(null);
       return;
     }
 
     // Create new TransitionConfig with full slot metadata
     const newTransition: TransitionConfig = {
       id: `tr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-      sourceTrackId: drawingPort.trackId,
-      sourceSlotId: drawingPort.slotId,
-      sourceSlotName: drawingPort.slotName,
-      sourceSlotNumber: drawingPort.slotNumber,
-      sourceTimeSec: drawingPort.timeSec,
+      sourceTrackId: source.trackId,
+      sourceSlotId: source.slotId,
+      sourceSlotName: source.slotName,
+      sourceSlotNumber: source.slotNumber,
+      sourceTimeSec: source.timeSec,
       targetTrackId: targetTrack.id,
       targetSlotId: targetSlot.id,
       targetSlotName: targetSlot.name,
@@ -363,12 +366,41 @@ export default function GraphMap({
 
     updateTransitions(updated);
     setDrawingPort(null);
+    setArmedSourcePort(null);
 
     // Auto-open transition configuration modal for this edge!
     setEditingTransition(newTransition);
     if (onSelectTransition) {
       onSelectTransition(newTransition);
     }
+  };
+
+  const handlePortPointerDown = (e: React.PointerEvent, track: Track, slot: TrackSlotInfo, isRight: boolean) => {
+    e.stopPropagation();
+    try {
+      (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    } catch {}
+    dragStartClientPos.current = { x: e.clientX, y: e.clientY };
+    const canvasPt = screenToCanvas(e.clientX, e.clientY);
+    const portState: DraggingPortState = {
+      trackId: track.id,
+      slotId: slot.id,
+      slotName: slot.name,
+      slotNumber: slot.slotNumber,
+      timeSec: slot.timeSec,
+      isRight,
+      startPos: canvasPt,
+    };
+    setDrawingPort(portState);
+    setArmedSourcePort(portState);
+    setCurrentCanvasMouse(canvasPt);
+  };
+
+  const handlePortPointerUp = (e: React.PointerEvent, targetTrack: Track, targetSlot: TrackSlotInfo) => {
+    e.stopPropagation();
+    const activeSource = drawingPort || armedSourcePort;
+    if (!activeSource) return;
+    connectSlots(activeSource, targetTrack, targetSlot);
   };
 
   // Helper to compute port coordinates in canvas space
@@ -412,6 +444,27 @@ export default function GraphMap({
         }}
       />
 
+      {/* Visual Armed Connection Mode Banner */}
+      {armedSourcePort && graphSubMode === 'canvas' && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-[#161920]/95 border-2 border-emerald-400 text-white px-5 py-2.5 rounded-2xl shadow-2xl backdrop-blur-md flex items-center gap-4 animate-in fade-in slide-in-from-top-4 duration-150">
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+          <div className="text-xs font-mono">
+            <span className="text-emerald-400 font-bold">Verbindungsmodus aktiv: </span>
+            <span className="text-white font-bold">{armedSourcePort.slotName} (#{armedSourcePort.slotNumber})</span>
+            <span className="text-gray-400 ml-2">➔ Klicke auf einen Ziel-Slot eines anderen Tracks</span>
+          </div>
+          <button
+            onClick={() => {
+              setArmedSourcePort(null);
+              setDrawingPort(null);
+            }}
+            className="px-2.5 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-mono font-bold text-gray-200 hover:text-white transition-colors"
+          >
+            Abbrechen (Esc)
+          </button>
+        </div>
+      )}
+
       {/* Top Right Submode Switcher (Waveform Timeline vs Node Graph) */}
       <div className="absolute top-4 right-4 z-40 flex items-center gap-3">
         <div className="flex items-center gap-1 bg-[#161920]/90 border border-[#242936] p-1 rounded-xl shadow-xl backdrop-blur-md">
@@ -453,6 +506,7 @@ export default function GraphMap({
             onSeek={onSeek}
             onTogglePlay={onTogglePlay}
             onAutomix={onAutomix}
+            onTransitionsChange={updateTransitions}
             onSelectTransition={(t) => {
               if (onSelectTransition) onSelectTransition(t);
             }}
@@ -461,6 +515,7 @@ export default function GraphMap({
               if (onSelectTransition) onSelectTransition(t);
             }}
             onOpenTrackAnalysis={onAnalyze}
+            onTrackUpdated={onTrackUpdated}
           />
         </div>
       ) : (
@@ -603,9 +658,9 @@ export default function GraphMap({
           })}
 
           {/* Active Drawing Edge */}
-          {drawingPort && (
+          {(drawingPort || armedSourcePort) && (
             <path
-              d={`M ${drawingPort.startPos.x} ${drawingPort.startPos.y} C ${drawingPort.startPos.x + 80} ${drawingPort.startPos.y}, ${currentCanvasMouse.x - 80} ${currentCanvasMouse.y}, ${currentCanvasMouse.x} ${currentCanvasMouse.y}`}
+              d={`M ${(drawingPort || armedSourcePort)!.startPos.x} ${(drawingPort || armedSourcePort)!.startPos.y} C ${(drawingPort || armedSourcePort)!.startPos.x + 80} ${(drawingPort || armedSourcePort)!.startPos.y}, ${currentCanvasMouse.x - 80} ${currentCanvasMouse.y}, ${currentCanvasMouse.x} ${currentCanvasMouse.y}`}
               fill="none"
               stroke="#A855F7"
               strokeWidth="3"
@@ -670,7 +725,8 @@ export default function GraphMap({
           const pos = positions[track.id] || { x: 80, y: 80 };
           const isSelected = selectedNodeId === track.id;
           const slots = getTrackSlots(track);
-          const isCandidateTarget = drawingPort && drawingPort.trackId !== track.id;
+          const activeSourcePort = drawingPort || armedSourcePort;
+          const isCandidateTarget = !!activeSourcePort && activeSourcePort.trackId !== track.id;
 
           return (
             <div
@@ -720,31 +776,55 @@ export default function GraphMap({
                 </div>
 
                 {slots.map((slot) => {
+                  const isThisSlotArmed = armedSourcePort?.slotId === slot.id;
+
                   return (
                     <div
                       key={slot.id}
+                      onClick={(e) => {
+                        if (isCandidateTarget && activeSourcePort) {
+                          e.stopPropagation();
+                          connectSlots(activeSourcePort, track, slot);
+                        }
+                      }}
                       onPointerUp={(e) => {
-                        if (isCandidateTarget) {
-                          handlePortPointerUp(e, track, slot);
+                        if (isCandidateTarget && activeSourcePort) {
+                          e.stopPropagation();
+                          connectSlots(activeSourcePort, track, slot);
                         }
                       }}
                       data-slot-number={slot.slotNumber}
                       data-slot-name={slot.name}
                       className={`slot-row relative h-9 rounded-lg flex items-center justify-between px-2.5 group transition-all ${
                         isCandidateTarget
-                          ? 'bg-emerald-950/40 border border-emerald-500/60 hover:bg-emerald-900/60 hover:border-emerald-400 cursor-pointer shadow-md'
+                          ? 'bg-emerald-950/50 border-2 border-emerald-400 hover:bg-emerald-900/70 hover:border-emerald-300 cursor-pointer shadow-[0_0_12px_rgba(16,185,129,0.3)] animate-pulse'
+                          : isThisSlotArmed
+                          ? 'bg-purple-950/60 border-2 border-purple-400 ring-2 ring-purple-500/50 shadow-md'
                           : 'bg-[#0D0E12] border border-[#242936] hover:border-purple-500/80'
                       }`}
                     >
                       {/* Left Port (Input Connector) */}
                       <div
+                        data-slot-port="input"
+                        data-slot-id={slot.id}
                         className={`absolute -left-2.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full cursor-crosshair transition-all flex items-center justify-center group-hover:scale-110 z-30 ${
                           isCandidateTarget
-                            ? 'bg-emerald-500 border-2 border-white shadow-[0_0_8px_rgba(16,185,129,0.9)] animate-pulse'
+                            ? 'bg-emerald-500 border-2 border-white shadow-[0_0_10px_rgba(16,185,129,0.9)] animate-ping'
                             : 'bg-[#161920] border-2 border-[#242936] hover:bg-emerald-500 hover:border-emerald-400'
                         }`}
                         title={`Ziel: ${slot.name} anbinden`}
-                        onPointerUp={(e) => handlePortPointerUp(e, track, slot)}
+                        onPointerUp={(e) => {
+                          if (activeSourcePort) {
+                            e.stopPropagation();
+                            connectSlots(activeSourcePort, track, slot);
+                          }
+                        }}
+                        onClick={(e) => {
+                          if (activeSourcePort) {
+                            e.stopPropagation();
+                            connectSlots(activeSourcePort, track, slot);
+                          }
+                        }}
                       >
                         <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                       </div>
@@ -780,9 +860,29 @@ export default function GraphMap({
 
                       {/* Right Port (Output Connector) */}
                       <div
-                        className="absolute -right-2.5 top-1/2 -translate-y-1/2 w-5 h-5 bg-[#161920] border-2 border-[#242936] rounded-full cursor-crosshair hover:bg-purple-500 hover:border-purple-400 transition-all flex items-center justify-center group-hover:scale-110 z-30"
-                        title={`Start: Übergang von ${slot.name} ziehen`}
+                        data-slot-port="output"
+                        data-slot-id={slot.id}
+                        className={`absolute -right-2.5 top-1/2 -translate-y-1/2 w-5 h-5 border-2 rounded-full cursor-crosshair transition-all flex items-center justify-center group-hover:scale-110 z-30 ${
+                          isThisSlotArmed
+                            ? 'bg-purple-600 border-white shadow-[0_0_12px_rgba(168,85,247,1)] ring-2 ring-purple-400 animate-pulse'
+                            : 'bg-[#161920] border-[#242936] hover:bg-purple-500 hover:border-purple-400'
+                        }`}
+                        title={`Start: Übergang von ${slot.name} ziehen oder anklicken`}
                         onPointerDown={(e) => handlePortPointerDown(e, track, slot, true)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const canvasPt = getNodePortCoord(track.id, slot.slotNumber - 1, true);
+                          const portState: DraggingPortState = {
+                            trackId: track.id,
+                            slotId: slot.id,
+                            slotName: slot.name,
+                            slotNumber: slot.slotNumber,
+                            timeSec: slot.timeSec,
+                            isRight: true,
+                            startPos: canvasPt,
+                          };
+                          setArmedSourcePort(prev => prev?.slotId === slot.id ? null : portState);
+                        }}
                       >
                         <div className="w-1.5 h-1.5 rounded-full bg-purple-400" />
                       </div>
