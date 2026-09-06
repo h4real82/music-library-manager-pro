@@ -20,7 +20,7 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { Track } from '../App';
-import { getCamelotColor, getEnergyColor } from '../lib/djMixerLogic';
+import { getCamelotColor, getEnergyColor, normalizeToCamelot } from '../lib/djMixerLogic';
 
 export type MapperAxis = 'key' | 'bpm' | 'energy' | 'mood' | 'genre';
 export type ColorMode = 'key' | 'energy' | 'genre';
@@ -59,24 +59,24 @@ const AXIS_OPTIONS: AxisOptionMeta[] = [
   },
   { 
     id: 'key', 
-    label: 'Key (Camelot Tonart)', 
+    label: 'Camelot Key (1A - 12B)', 
     shortLabel: 'Key', 
-    icon: Disc, 
-    description: 'Harmonische Reihenfolge nach dem Camelot-Rad (1A - 12B)' 
+    icon: Music, 
+    description: 'Harmonische Tonarten im Camelot-Kreis (1-12, A/B)' 
   },
   { 
     id: 'genre', 
-    label: 'Genre (Stilrichtung)', 
+    label: 'Genre / Style', 
     shortLabel: 'Genre', 
-    icon: Music, 
-    description: 'Musikalische Gruppierung nach Genres' 
+    icon: Disc, 
+    description: 'Musikalische Stilrichtung (Techno, House, Trance...)' 
   },
   { 
     id: 'mood', 
     label: 'Mood (Stimmung)', 
     shortLabel: 'Mood', 
     icon: Sparkles, 
-    description: 'Atmosphärische Stimmung der Tracks' 
+    description: 'Atmosphäre (Dark, Driving, Hypnotic, Uplifting...)' 
   },
 ];
 
@@ -85,11 +85,17 @@ const GENRE_PALETTE = [
   '#3B82F6', '#F43F5E', '#84CC16', '#8B5CF6', '#14B8A6'
 ];
 
+const COLOR_OPTIONS: { id: ColorMode; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: 'key', label: 'Camelot Key', icon: Music },
+  { id: 'energy', label: 'Energy Level', icon: Zap },
+  { id: 'genre', label: 'Genre Style', icon: Disc },
+];
+
 /**
- * Deterministic micro-jitter to prevent dots from stacking perfectly on top of each other
+ * Deterministic pseudo-random offset based on track string ID
  */
-function getHashJitter(id: string, seed: number, maxOffset: number): number {
-  let hash = seed * 31;
+function getHashJitter(id: string, salt: number = 0, maxOffset: number = 2.0): number {
+  let hash = salt;
   for (let i = 0; i < id.length; i++) {
     hash = ((hash << 5) - hash) + id.charCodeAt(i);
     hash |= 0;
@@ -99,16 +105,17 @@ function getHashJitter(id: string, seed: number, maxOffset: number): number {
 }
 
 /**
- * Parse Camelot Key to numeric 1..12 and minor/major offset
+ * Parse Camelot Key to numeric 1..12 and minor/major offset (supports Rekordbox 10m/7d, Camelot 8A/8B, Musical Keys Am/C#m)
  */
 function parseCamelotPosition(key?: string): { number: number; isMajor: boolean } {
   if (!key) return { number: 8, isMajor: false };
-  const match = key.trim().match(/^(\d+)\s*([ABM]?)/i);
+  const norm = normalizeToCamelot(key);
+  if (!norm) return { number: 8, isMajor: false };
+  const match = norm.match(/^(\d+)([AB])/i);
   if (!match) return { number: 8, isMajor: false };
   const num = parseInt(match[1], 10);
   const clampedNum = Math.max(1, Math.min(12, isNaN(num) ? 8 : num));
-  const letter = (match[2] || 'A').toUpperCase();
-  const isMajor = letter === 'B';
+  const isMajor = match[2].toUpperCase() === 'B';
   return { number: clampedNum, isMajor };
 }
 
@@ -405,6 +412,7 @@ export default function TrackMapper({
         t.title.toLowerCase().includes(q) ||
         (t.artist || '').toLowerCase().includes(q) ||
         (t.key || '').toLowerCase().includes(q) ||
+        (normalizeToCamelot(t.key) || '').toLowerCase().includes(q) ||
         (t.genre || '').toLowerCase().includes(q) ||
         (t.mood || '').toLowerCase().includes(q) ||
         t.bpm?.toString().includes(q)
@@ -1102,16 +1110,26 @@ export default function TrackMapper({
                 {/* Metadata Pills */}
                 <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-[#242936]">
                   {/* Key Badge */}
-                  <span 
-                    className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border shadow-sm"
-                    style={{
-                      backgroundColor: `${getCamelotColor(hoveredTrack.key)}20`,
-                      borderColor: `${getCamelotColor(hoveredTrack.key)}60`,
-                      color: getCamelotColor(hoveredTrack.key)
-                    }}
-                  >
-                    {hoveredTrack.key || '8A'}
-                  </span>
+                  {(() => {
+                    const normKey = normalizeToCamelot(hoveredTrack.key);
+                    const isDiff = Boolean(normKey && hoveredTrack.key && normKey.toUpperCase() !== hoveredTrack.key.trim().toUpperCase());
+                    return (
+                      <span 
+                        className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border shadow-sm inline-flex items-center gap-1"
+                        style={{
+                          backgroundColor: `${getCamelotColor(hoveredTrack.key)}20`,
+                          borderColor: `${getCamelotColor(hoveredTrack.key)}60`,
+                          color: getCamelotColor(hoveredTrack.key)
+                        }}
+                        title={isDiff ? `Camelot: ${normKey} (Library: ${hoveredTrack.key})` : `Camelot: ${hoveredTrack.key || '—'}`}
+                      >
+                        <span>{normKey || hoveredTrack.key || '8A'}</span>
+                        {isDiff && (
+                          <span className="text-[8px] opacity-60 font-normal">({hoveredTrack.key})</span>
+                        )}
+                      </span>
+                    );
+                  })()}
 
                   {/* BPM Badge */}
                   <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-[#0D0E12] border border-[#242936] text-cyan-300">

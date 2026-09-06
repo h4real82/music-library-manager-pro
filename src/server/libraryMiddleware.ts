@@ -1,6 +1,7 @@
 import type { Connect } from 'vite';
 import fs from 'fs';
 import path from 'path';
+import { generateMixedInKeyStructure } from '../lib/mixedInKeyDetection';
 
 export interface MulimaGroupData {
   id: string;
@@ -137,9 +138,26 @@ export function createLibraryMiddleware(rootDir: string): Connect.NextHandleFunc
             url: `/api/library/stream?file=${encodeURIComponent(relPath)}`,
             coverArt: savedData.coverArt || undefined,
             gradient: savedData.gradient || `linear-gradient(${Math.floor(Math.random() * 360)}deg, #161920, #A855F7)`,
-            segments: savedData.segments || undefined,
             duration: savedData.duration || undefined,
-            hotCues: savedData.hotCues || undefined,
+            ...(() => {
+              const effDuration = savedData.duration || 240;
+              const effBpm = savedData.bpm || 124;
+              const effKey = savedData.key || '8A';
+              const effEnergy = savedData.energy || 7;
+              let cues = savedData.hotCues;
+              let segs = savedData.segments;
+              if (!cues || cues.length < 7 || !segs || segs.length < 7) {
+                const mik = generateMixedInKeyStructure({
+                  duration: effDuration,
+                  bpm: effBpm,
+                  camelotKey: effKey,
+                  baseEnergy: effEnergy
+                });
+                cues = mik.hotCues;
+                segs = mik.segments;
+              }
+              return { hotCues: cues, segments: segs };
+            })(),
             album: savedData.album || undefined,
             year: savedData.year || undefined,
             genre: savedData.genre || savedData.style || undefined,

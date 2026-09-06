@@ -7,6 +7,81 @@ export interface KeyCompatibilityResult {
   description: string;
 }
 
+// Full mapping of musical notes to standard Camelot codes
+export const MUSICAL_KEY_TO_CAMELOT: Record<string, string> = {
+  // Minor Keys (Camelot A)
+  'ABM': '1A', 'G#M': '1A', 'ABMIN': '1A', 'G#MIN': '1A', 'ABMINOR': '1A', 'G#MINOR': '1A', 'ABMOLL': '1A', 'G#MOLL': '1A',
+  'EBM': '2A', 'D#M': '2A', 'EBMIN': '2A', 'D#MIN': '2A', 'EBMINOR': '2A', 'D#MINOR': '2A', 'EBMOLL': '2A', 'D#MOLL': '2A',
+  'BBM': '3A', 'A#M': '3A', 'BBMIN': '3A', 'A#MIN': '3A', 'BBMINOR': '3A', 'A#MINOR': '3A', 'BBMOLL': '3A', 'A#MOLL': '3A',
+  'FM': '4A', 'FMIN': '4A', 'FMINOR': '4A', 'FMOLL': '4A',
+  'CM': '5A', 'CMIN': '5A', 'CMINOR': '5A', 'CMOLL': '5A',
+  'GM': '6A', 'GMIN': '6A', 'GMINOR': '6A', 'GMOLL': '6A',
+  'DM': '7A', 'DMIN': '7A', 'DMINOR': '7A', 'DMOLL': '7A',
+  'AM': '8A', 'AMIN': '8A', 'AMINOR': '8A', 'AMOLL': '8A',
+  'EM': '9A', 'EMIN': '9A', 'EMINOR': '9A', 'EMOLL': '9A',
+  'BM': '10A', 'BMIN': '10A', 'BMINOR': '10A', 'BMOLL': '10A', 'HM': '10A', 'HMIN': '10A', 'HMINOR': '10A', 'HMOLL': '10A',
+  'F#M': '11A', 'GBM': '11A', 'F#MIN': '11A', 'GBMIN': '11A', 'F#MINOR': '11A', 'GBMINOR': '11A', 'F#MOLL': '11A', 'GBMOLL': '11A',
+  'DBM': '12A', 'C#M': '12A', 'DBMIN': '12A', 'C#MIN': '12A', 'DBMINOR': '12A', 'C#MINOR': '12A', 'DBMOLL': '12A', 'C#MOLL': '12A',
+
+  // Major Keys (Camelot B)
+  'B': '1B', 'BMAJ': '1B', 'BMAJOR': '1B', 'BDUR': '1B', 'H': '1B', 'HMAJ': '1B', 'HMAJOR': '1B', 'HDUR': '1B',
+  'F#': '2B', 'GB': '2B', 'F#MAJ': '2B', 'GBMAJ': '2B', 'F#MAJOR': '2B', 'GBMAJOR': '2B', 'F#DUR': '2B', 'GBDUR': '2B',
+  'DB': '3B', 'C#': '3B', 'DBMAJ': '3B', 'C#MAJ': '3B', 'DBMAJOR': '3B', 'C#MAJOR': '3B', 'DBDUR': '3B', 'C#DUR': '3B',
+  'AB': '4B', 'G#': '4B', 'ABMAJ': '4B', 'G#MAJ': '4B', 'ABMAJOR': '4B', 'G#MAJOR': '4B', 'ABDUR': '4B', 'G#DUR': '4B',
+  'EB': '5B', 'D#': '5B', 'EBMAJ': '5B', 'D#MAJ': '5B', 'EBMAJOR': '5B', 'D#MAJOR': '5B', 'EBDUR': '5B', 'D#DUR': '5B',
+  'BB': '6B', 'A#': '6B', 'BBMAJ': '6B', 'A#MAJ': '6B', 'BBMAJOR': '6B', 'A#MAJOR': '6B', 'BBDUR': '6B', 'A#DUR': '6B',
+  'F': '7B', 'FMAJ': '7B', 'FMAJOR': '7B', 'FDUR': '7B',
+  'C': '8B', 'CMAJ': '8B', 'CMAJOR': '8B', 'CDUR': '8B',
+  'G': '9B', 'GMAJ': '9B', 'GMAJOR': '9B', 'GDUR': '9B',
+  'D': '10B', 'DMAJ': '10B', 'DMAJOR': '10B', 'DDUR': '10B',
+  'A': '11B', 'AMAJ': '11B', 'AMAJOR': '11B', 'ADUR': '11B',
+  'E': '12B', 'EMAJ': '12B', 'EMAJOR': '12B', 'EDUR': '12B',
+};
+
+/**
+ * Normalizes any key representation (Camelot e.g. '8A', Rekordbox/OpenKey e.g. '10m'/'7d',
+ * or Musical Notes e.g. 'Am', 'C#m', 'F#') into standard Camelot format (e.g. '8A', '8B', '12A', '1B').
+ */
+export function normalizeToCamelot(key?: string | null): string | null {
+  if (!key) return null;
+  const raw = key.trim();
+  if (!raw || raw === '-' || raw === '?' || raw.toLowerCase() === 'unknown') return null;
+
+  // 1. Check for Camelot / Rekordbox / OpenKey pattern: 1-12 followed by A/B or M/D (case insensitive)
+  // e.g. "8A", "8a", "08A", "10m", "7d", "12M", "1D", "8 A", "8-A", "8A / Am"
+  const numLetterMatch = raw.match(/\b0?([1-9]|1[0-2])\s*[-/]?\s*([ABMDabmd])\b/);
+  if (numLetterMatch) {
+    const num = parseInt(numLetterMatch[1], 10);
+    const char = numLetterMatch[2].toUpperCase();
+    const letter = (char === 'M' || char === 'A') ? 'A' : 'B';
+    return `${num}${letter}`;
+  }
+
+  // 2. Fast lookup for musical note strings
+  const clean = raw.toUpperCase()
+    .replace(/[^A-Z0-9#]/g, '')
+    .replace(/\s+/g, '');
+
+  if (MUSICAL_KEY_TO_CAMELOT[clean]) {
+    return MUSICAL_KEY_TO_CAMELOT[clean];
+  }
+
+  // 3. Regex parser for musical notes with accidentals (#/b) and modes (m/min/minor/moll/maj/major/dur)
+  const noteMatch = raw.match(/^([A-Ga-gHh])([#b]?)\s*(min(?:or)?|moll|maj(?:or)?|dur|m)?$/i);
+  if (noteMatch) {
+    const root = noteMatch[1].toUpperCase();
+    const accidental = noteMatch[2] ? (noteMatch[2] === '#' ? '#' : 'B') : '';
+    const mode = (noteMatch[3] || '').toLowerCase();
+    const isMinor = mode.startsWith('m') || mode === 'moll';
+    const lookupKey = `${root}${accidental}${isMinor ? 'M' : ''}`;
+    if (MUSICAL_KEY_TO_CAMELOT[lookupKey]) {
+      return MUSICAL_KEY_TO_CAMELOT[lookupKey];
+    }
+  }
+
+  return null;
+}
+
 /**
  * Traktor / Serato / Camelot Key Mixing Evaluation
  */
@@ -15,17 +90,20 @@ export function evaluateKeyCompatibility(keyA?: string, keyB?: string): KeyCompa
     return { score: 75, label: 'Unbekannt', type: 'adjacent', description: 'Tonart nicht hinterlegt' };
   }
 
+  const normA = normalizeToCamelot(keyA);
+  const normB = normalizeToCamelot(keyB);
+
   const parseCamelot = (k: string) => {
-    const match = k.match(/(\d+)([AB])/i);
+    const match = k.match(/(\d+)([AB])/);
     if (!match) return null;
-    return { num: parseInt(match[1]), letter: match[2].toUpperCase() };
+    return { num: parseInt(match[1], 10), letter: match[2] };
   };
 
-  const cA = parseCamelot(keyA);
-  const cB = parseCamelot(keyB);
+  const cA = normA ? parseCamelot(normA) : null;
+  const cB = normB ? parseCamelot(normB) : null;
 
   if (!cA || !cB) {
-    if (keyA === keyB) {
+    if (keyA.trim().toUpperCase() === keyB.trim().toUpperCase()) {
       return { score: 100, label: 'Identisch', type: 'perfect', description: 'Exakt dieselbe Tonart' };
     }
     return { score: 60, label: 'Neutral', type: 'adjacent', description: 'Harmonische Kompatibilität prüfen' };
@@ -37,7 +115,7 @@ export function evaluateKeyCompatibility(keyA?: string, keyB?: string): KeyCompa
       score: 100,
       label: 'Perfekter Match',
       type: 'perfect',
-      description: `Beide Tracks in ${keyA}. Maximale harmonische Konsistenz.`
+      description: `Beide Tracks in ${normA}. Maximale harmonische Konsistenz.`
     };
   }
 
@@ -47,7 +125,7 @@ export function evaluateKeyCompatibility(keyA?: string, keyB?: string): KeyCompa
       score: 95,
       label: 'Relatives Dur/Moll',
       type: 'relative',
-      description: `Wechsel von ${keyA} zu ${keyB}. Emotionaler Stimmungswechsel ohne Disharmonie.`
+      description: `Wechsel von ${normA} zu ${normB}. Emotionaler Stimmungswechsel ohne Disharmonie.`
     };
   }
 
@@ -62,8 +140,8 @@ export function evaluateKeyCompatibility(keyA?: string, keyB?: string): KeyCompa
       label: isEnergyBoost ? 'Energy Boost (+1)' : 'Energy Drop (-1)',
       type: 'adjacent',
       description: isEnergyBoost 
-        ? `Modulation um +1 (${keyA} ➔ ${keyB}). Hebt die Tanzflächen-Energie an!`
-        : `Modulation um -1 (${keyA} ➔ ${keyB}). Angenehmer Flow mit Beruhigungseffekt.`
+        ? `Modulation um +1 (${normA} ➔ ${normB}). Hebt die Tanzflächen-Energie an!`
+        : `Modulation um -1 (${normA} ➔ ${normB}). Angenehmer Flow mit Beruhigungseffekt.`
     };
   }
 
@@ -73,7 +151,7 @@ export function evaluateKeyCompatibility(keyA?: string, keyB?: string): KeyCompa
       score: 40,
       label: 'Harmonischer Clash',
       type: 'clash',
-      description: `Achtung: ${keyA} und ${keyB} liegen weit auseinander. EQ-Trennung oder Filter empfohlen!`
+      description: `Achtung: ${normA} und ${normB} liegen weit auseinander. EQ-Trennung oder Filter empfohlen!`
     };
   }
 
@@ -81,7 +159,7 @@ export function evaluateKeyCompatibility(keyA?: string, keyB?: string): KeyCompa
     score: 60,
     label: 'Akzeptabel',
     type: 'adjacent',
-    description: `Harmonischer Übergang von ${keyA} zu ${keyB}.`
+    description: `Harmonischer Übergang von ${normA} zu ${normB}.`
   };
 }
 
@@ -517,17 +595,11 @@ export const CAMELOT_KEY_COLORS: Record<string, string> = {
  */
 export function getCamelotColor(key?: string): string {
   if (!key) return '#A855F7';
+  const norm = normalizeToCamelot(key);
+  if (norm && CAMELOT_KEY_COLORS[norm]) return CAMELOT_KEY_COLORS[norm];
+
   const clean = key.trim().toUpperCase();
   if (CAMELOT_KEY_COLORS[clean]) return CAMELOT_KEY_COLORS[clean];
-
-  // Try parsing number + letter if formatting varies (e.g. "8 a" or "8m")
-  const match = clean.match(/^(\d+)\s*([ABM])/);
-  if (match) {
-    const num = match[1];
-    const letter = match[2] === 'M' ? 'A' : match[2];
-    const normalized = `${num}${letter}`;
-    if (CAMELOT_KEY_COLORS[normalized]) return CAMELOT_KEY_COLORS[normalized];
-  }
   return '#A855F7';
 }
 
@@ -536,11 +608,13 @@ export function getCamelotColor(key?: string): string {
  */
 export function parseCamelotOrder(key?: string): number {
   if (!key) return 999;
-  const match = key.trim().match(/^(\d+)\s*([ABM]?)/i);
+  const norm = normalizeToCamelot(key);
+  if (!norm) return 900;
+  const match = norm.match(/^(\d+)([AB])/);
   if (!match) return 900;
   const num = parseInt(match[1], 10);
-  const letter = (match[2] || 'A').toUpperCase();
-  return num * 2 + (letter === 'B' ? 1 : 0);
+  const isMajor = match[2] === 'B';
+  return num * 2 + (isMajor ? 1 : 0);
 }
 
 /**

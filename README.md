@@ -181,14 +181,29 @@ Die Bibliotheksansichten bieten maximale Übersicht für umfangreiche Musiksamml
   - **Interpret & Titel**: Sauber in zwei Spalten separiert mit A–Z und Z–A Sortierung per Klick auf die Kopfzeile.
   - **BPM & Energy**: Schnelle Sortierung nach Geschwindigkeit oder Intensität.
   - **Genre & Mood**: Getrennt voneinander filter- und sortierbar.
+- **Interaktives Camelot Wheel mit Multi-Notation-Normalisierung**:
+  - 1-Klick-Filterung auf jede der 24 Tonarten (1A–12B).
+  - Erkennt nahtlos Rekordbox/OpenKey (`11m` ➔ `11A`, `7d` ➔ `7B`), musikalische Noten (`Am`, `F#m`) sowie Traktor/Camelot.
+  - Anzeige des standardisierten Camelot-Codes samt Original-Bibliotheksnotation in der Tabelle (z. B. `11A (11m)`).
+  - Prominenter Filter-Chip mit 1-Klick-Reset (`Key: 11A ✕`) in der Toolbar.
 - **Camelot Wheel Harmonische Farben**:
-  - Jede Tonart erstrahlt in der exakten Farbe des Camelot-Rads (z. B. 8A = Dunkelrot, 9A = Magenta, 11A = Cyan, etc.).
+  - Jede Tonart erstrahlt in der exakten Farbe des Camelot-Rads (z. B. 8A = Dunkelrot, 9A = Magenta, 11A = Violett, etc.).
 - **10-stufige Energy-Badges**:
   - Farbverlauf von Chilled (1/10) bis Peaktime (10/10) identisch mit den Filtern in der linken Seitenleiste.
 - **Spalten-Konfigurator**:
   - Über das Zahnrad-Symbol können beliebige Spalten (Cover, Titel, Interpret, Album, BPM, Key, Energy, Genre, Mood, Dauer, Aktionen) individuell ein- oder ausgeblendet werden.
 - **Intelligente Duplikate-Bereinigung**:
   - Findet Dubletten anhand von ID3-Tags, Bitraten und Audio-Signaturen und entfernt diese sicher.
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_camelot_filtered_11A.png" alt="Camelot Wheel Filter aktiv: 11A mit passenden Tracks in violett" width="90%" />
+  <p><em>Interaktives Camelot Wheel: 1-Klick-Filterung nach 11A mit Rekordbox-Normalisierung (11m) und aktiver Filter-Pille</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_camelot_filtered_10A.png" alt="Camelot Wheel Filter aktiv: 10A mit 24 gefilterten Tracks in magenta" width="90%" />
+  <p><em>Camelot Wheel: 10A-Filterung (10m / Bm Moll) mit 100% Farb- und Notations-Synchronität</em></p>
+</div>
 
 <div align="center">
   <img src="docs/screenshots/screenshot_list_view_separated_sorted.png" alt="List View: Getrennte Spalten und Camelot-Sortierung" width="90%" />
@@ -200,25 +215,71 @@ Die Bibliotheksansichten bieten maximale Übersicht für umfangreiche Musiksamml
   <p><em>Spalten-Konfigurator: Benutzerdefinierte Tabellenansicht mit flexibler Sichtbarkeit</em></p>
 </div>
 
+<div align="center">
+  <img src="docs/screenshots/screenshot_list_view_cue_points.png" alt="List View: Cue Points Spalte nach Mixed In Key 11" width="90%" />
+  <p><em>List View: Neue CUE POINTS Spalte mit Mixed In Key 11 Badges und direkter Sortierfunktion</em></p>
+</div>
+
 ---
 
-### 3. Track-Analyse & Precision Deck Studio
+### 3. Vorhörfunktion & Interaktiver Scrubber (Echtzeit-Playhead mit Maus-Dragging)
+Die Vorhörfunktion am unteren Bildschirmrand bietet blitzschnelles Vorhören und präzises Scrubbing ohne Verzögerung:
+
+- **Maus-verschiebbarer Positionspunkt (Playhead-Thumb)**:
+  - Der weiße Playhead-Punkt mit lila Leuchtkranz kann per Maus gedrückt und stufenlos entlang der Wellenform gezogen werden (`Real-time Drag Scrubbing`).
+  - Selbst wenn der Mauszeiger beim Ziehen das Element verlässt, verfolgt die Audio-Engine die Mausposition flüssig (`Window Event Listener`).
+- **Live Timestamp Tooltip**:
+  - Beim Überfahren oder Verschieben zeigt ein dynamischer Tooltip exakt die Zielzeit an (z. B. `2:03`).
+- **Mixed In Key 11 CUE-Point Ticks**:
+  - Bis zu 8 CUE-Punkte (`CUE 1` bis `CUE 8`) sind direkt auf der Fortschrittsleiste als Sprungmarken sichtbar.
+  - Die Prev/Next-Tasten springen präzise von CUE zu CUE.
+- **Klickbare Makro-Bereiche**:
+  - Unter dem Scrubber liegt der lückenlose Bereichsstreifen (*Intro, Bassline, Verse, Build-Up, Main Drop, Breakdown, Peak Drop, Outro*). Ein Klick auf ein Segment springt sofort an dessen Taktanfang!
+- **Entkoppelter Studio-Button**:
+  - Kein Klick-Konflikt mehr: Neben Cover und Tracktitel öffnet ein dezidierter `[Studio]`-Button direkt die Detail-Analyse, während Klicks auf die Zeitleiste ausschließlich die Wiedergabe steuern.
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_vorhoer_draggable_scrubber.png" alt="Vorhörfunktion mit verschiebbarem Playhead und Makro-Bereichen" width="90%" />
+  <p><em>Vorhörfunktion: Verschiebbare Abspielposition, Live-Hover-Tooltip, 8 CUE-Ticks und farbcodierte Makro-Bereiche</em></p>
+</div>
+
+---
+
+### 4. Track-Analyse & Precision Deck Studio (Mixed In Key 11 CUE-Engine)
 Klicke bei einem beliebigen Track auf **"Studio"**, um in das professionelle Analyse- und Vorbereitungsdeck zu wechseln:
 
+- **Mixed In Key 11 Phrasing & Struktur-Erkennung**:
+  - Intelligente Erkennung musikalischer Formteile, quantisiert auf 4-Takt- (16 Beats) und 8-Takt-Downbeat-Phrasen (32 Beats).
+  - Erkennt echte Frequenz- und Energie-Wendepunkte (Multi-Band Sub/Kick-Einstiege, Melodie/Vocal-Einsätze und High-Frequency Risers).
+  - Deckt 100 % der Trackdauer mit kontinuierlichen Abschnitten ab (*Intro, Bassline, Verse 1, Build-Up 1, Main Drop 1, Breakdown, Peak Drop 2, Outro*).
+- **8 CUE Points nach Mixed In Key Vorbild**:
+  - CUE 1 bis CUE 8 sitzen wie im Hardware-/Software-Vorbild als dunkle Header-Badges (`[CUE 1]` .. `[CUE 8]`) mit senkrechten Farblinien über der Übersichtswellenform.
+  - Jeder CUE-Badge auf der Übersichtsleiste kann direkt angeklickt werden, um die Nadel sofort darauf zu sperren.
+- **Interaktive Übersichtswellenform (Overview Stripe)**:
+  - Kann ebenfalls per Mausklick und -drag verschoben werden, um den Zoom-Ausschnitt und die Wiedergabe im Handumdrehen zu steuern.
 - **720-Slice Fluid Waveform**:
   - Dreifarbig differenzierte Frequenzbänder (Rot = Bass, Grün = Mitten, Blau = Höhen).
-- **Hot-Cue Slots (1 – 5)**:
-  - Definierte Einsprungpunkte: *Intro Mix In*, *Bass Entry*, *Main Drop*, *Peak Drop*, *Outro Mix Out*.
 - **Dynamische Loop-Slots**:
   - Setze Live-Loops mit 1, 2, 4, 8, 16 oder 32 Beats. Gespeicherte Loops ordnen sich automatisch chronologisch in die Track-Struktur ein.
 - **3-Band Spektrum Visualizer & DSP EQ-Rack**:
   - Bouncing Pegelanzeige mit 3-Band Equalizer und Kill-Switches für Bässe, Mitten und Höhen.
-- **Online-Portale**:
-  - Direkte 1-Klick-Recherche auf Beatport, Discogs, Traxsource und Spotify.
+- **Präzisions-Taktgitter & Transienten-Synchronität (Downbeat Anchor & Beatlines)**:
+  - Jeder Taktstrich (Downbeat 1, 2, 3, 4 sowie Sub-Beats .2, .3, .4) ist **mathematisch zentriert auf den Spitzenwerten (Transienten-Ausschlägen)** der Wellenform verankert.
+  - Phasen-Offsets und Nudges verschieben Gitterlinien und Transienten harmonisch im Einklang, sodass zwei Tracks absolut phasenstarr synchronisiert werden können.
 
 <div align="center">
-  <img src="docs/screenshots/screenshot_precision_deck_studio.png" alt="Precision Deck Studio mit 720-Slice Waveform und EQ-Rack" width="90%" />
-  <p><em>Precision Deck Studio: 720-Slice Wellenform, CUE-Slots, DSP EQ-Rack und Spektrum-Visualizer</em></p>
+  <img src="docs/screenshots/screenshot_precision_beatgrid_aligned.png" alt="Precision Waveform: Taktstriche exakt auf den Transienten-Ausschlägen" width="90%" />
+  <p><em>Precision Waveform: Beatgrid-Taktstriche (1, .2, .3, .4, 2, ...) sitzen zentimetergenau im Zentrum der Kick-Ausschläge</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_precision_beatgrid_tab_aligned.png" alt="Takt-Gitter Tab mit kalibriertem Downbeat-Anchor" width="90%" />
+  <p><em>Takt-Gitter Tab: Tempo-Stabilität (99%), Downbeat Anchor und kalibriertes 4/4 Raster mit mikrosekundengenauer Taktstrich-Ausrichtung</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_mixed_in_key_cues_and_sections.png" alt="Track-Analyse Studio mit Mixed In Key 11 CUE Points und Sektionen" width="90%" />
+  <p><em>Studio Analyse View: 8 CUE Points nach Mixed In Key 11 Vorbild mit vertikalen Trennlinien und lückenlosen Makro-Sektionen</em></p>
 </div>
 
 ---
@@ -247,6 +308,9 @@ Erstelle dein DJ-Set als interaktives visuelles Netzwerk:
 ### 5. Waveform Timeline Studio (Mehrspur-Zeitleiste)
 Die Mehrspur-Zeitleiste erlaubt das zentimetergenaue Arrangieren von Übergängen:
 
+- **Master-Playhead & synchronisierte DJ-Decks**:
+  - Ein hochpräziser vertikaler Playhead gleitet flüssig über das Zeitlineal und alle Trackspuren hinweg.
+  - Mit aktuellem Zeitstempel-Badge im Lineal, 1-Klick-Lineal-Seek und direkter Synchronisation mit den unteren Decks (Deck A/B ON AIR und Meter-Aktivität).
 - **Horizontales Verschieben mit Beatgrid-Snap**:
   - Packe eine Wellenform und bewege sie horizontal. Track B rastet automatisch im 4-Takt-Raster relativ zu Track A ein.
 - **Stationärer Übergangsrahmen & `[▶ Cue Mix]`**:
@@ -254,6 +318,11 @@ Die Mehrspur-Zeitleiste erlaubt das zentimetergenaue Arrangieren von Übergänge
   - Der `[▶ Cue Mix]`-Button springt sofort an den Startpunkt des Übergangs für ein schnelles Probehören.
 - **Waveform Transition Overlap Studio**:
   - Klicke auf **"Hüllkurven"**, um die 3-Band EQ-Kurven (Bass = Orange, Mitten = Gelb, Höhen = Cyan) mit Kontrollpunkten punktgenau zu modellieren.
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_waveform_timeline_playing_verified.png" alt="Waveform Timeline mit aktivem Master Playhead und ON AIR Deck" width="90%" />
+  <p><em>Waveform Timeline Studio: Live laufender Master-Playhead mit Zeit-Badge, Wellenspuren und synchronisiertem ON AIR Deck A</em></p>
+</div>
 
 <div align="center">
   <img src="docs/screenshots/screenshot_waveform_timeline_transition_cue.png" alt="Waveform Timeline Studio mit Cue Mix" width="90%" />

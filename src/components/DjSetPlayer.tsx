@@ -32,6 +32,10 @@ interface DjSetPlayerProps {
   onOpenTrackAnalysis?: (track: TrackDef) => void;
   onTrackUpdated?: (track: TrackDef) => void;
   liveSetEvent?: SetTimeUpdateEvent | null;
+  currentTime?: number;
+  isPlaying?: boolean;
+  onTogglePlay?: () => void;
+  onSeek?: (timeSec: number) => void;
   onOpenSetExport?: () => void;
   onSaveSetAsPlaylist?: () => void;
 }
@@ -78,10 +82,15 @@ export default function DjSetPlayer({
   onOpenTrackAnalysis,
   onTrackUpdated,
   liveSetEvent,
+  currentTime,
+  isPlaying: externalIsPlaying,
+  onTogglePlay,
+  onSeek,
   onOpenSetExport,
   onSaveSetAsPlaylist,
 }: DjSetPlayerProps) {
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [internalIsPlaying, setInternalIsPlaying] = useState(false);
+  const isPlaying = externalIsPlaying !== undefined ? externalIsPlaying : internalIsPlaying;
   const [crossfaderProgress, setCrossfaderProgress] = useState(0); // 0.0 -> 1.0
   const [transitionState, setTransitionState] = useState<TransitionState | null>(null);
   const [isAutoTransitioning, setIsAutoTransitioning] = useState(false);
@@ -103,24 +112,12 @@ export default function DjSetPlayer({
     : 0;
 
   // Sync tracks with audio engine when not playing live set
-  useEffect(() => {
-    if (deckATrack && !liveSetEvent?.isPlaying) {
-      globalDjSetEngine.loadDeckA(deckATrack, sourceMixOutSec);
-    }
-  }, [deckATrack, sourceMixOutSec, liveSetEvent?.isPlaying]);
-
-  useEffect(() => {
-    if (deckBTrack && !liveSetEvent?.isPlaying) {
-      globalDjSetEngine.loadDeckB(deckBTrack, targetMixInSec);
-    }
-  }, [deckBTrack, targetMixInSec, liveSetEvent?.isPlaying]);
-
   // Key and Tempo evaluation
   const keyComp = evaluateKeyCompatibility(deckATrack?.key, deckBTrack?.key);
   const tempoSync = calculateTempoSync(deckATrack?.bpm || 130, deckBTrack?.bpm || 130);
 
-  // Derive real-time values directly from live set playback event to avoid cascading effect loops
-  const isSetPlaying = Boolean(liveSetEvent?.isPlaying);
+  // Derive real-time values directly from live set playback event or external isPlaying
+  const isSetPlaying = Boolean(externalIsPlaying || liveSetEvent?.isPlaying);
   const activeCrossfaderProgress = (isSetPlaying && !isAutoTransitioning)
     ? (liveSetEvent?.crossfaderPosition ?? 0)
     : crossfaderProgress;
@@ -132,12 +129,25 @@ export default function DjSetPlayer({
   const isDeckAActive = isPlaying && (activeCrossfaderProgress < 0.98);
   const isDeckBActive = isPlaying && (activeCrossfaderProgress > 0.02);
 
-  // Sync isPlaying flag from set engine
+  // Sync tracks with audio engine ONLY when not in set playback
   useEffect(() => {
-    if (liveSetEvent && liveSetEvent.isPlaying !== undefined) {
-      setIsPlaying(prev => prev === liveSetEvent.isPlaying ? prev : liveSetEvent.isPlaying);
+    if (deckATrack && !isSetPlaying) {
+      globalDjSetEngine.loadDeckA(deckATrack, sourceMixOutSec);
     }
-  }, [liveSetEvent?.isPlaying]);
+  }, [deckATrack?.id, sourceMixOutSec, isSetPlaying]);
+
+  useEffect(() => {
+    if (deckBTrack && !isSetPlaying) {
+      globalDjSetEngine.loadDeckB(deckBTrack, targetMixInSec);
+    }
+  }, [deckBTrack?.id, targetMixInSec, isSetPlaying]);
+
+  // Sync isPlaying flag from set engine only if not controlled by parent
+  useEffect(() => {
+    if (externalIsPlaying === undefined && liveSetEvent && liveSetEvent.isPlaying !== undefined) {
+      setInternalIsPlaying(prev => prev === liveSetEvent.isPlaying ? prev : liveSetEvent.isPlaying);
+    }
+  }, [externalIsPlaying, liveSetEvent?.isPlaying]);
 
   // Update engine on manual crossfader change when not in live set playback
   useEffect(() => {
@@ -169,20 +179,25 @@ export default function DjSetPlayer({
 
   // Toggle play/pause
   const togglePlay = () => {
+    if (onTogglePlay) {
+      onTogglePlay();
+      return;
+    }
+
     if (liveSetEvent) {
       if (isPlaying) {
         globalDjSetEngine.pause();
-        setIsPlaying(false);
+        setInternalIsPlaying(false);
       } else {
         globalDjSetEngine.play();
-        setIsPlaying(true);
+        setInternalIsPlaying(true);
       }
       return;
     }
 
     if (isPlaying) {
       globalDjSetEngine.pause();
-      setIsPlaying(false);
+      setInternalIsPlaying(false);
       if (isAutoTransitioning) {
         cancelAutoTransition();
       }
@@ -200,7 +215,7 @@ export default function DjSetPlayer({
         deckBTrack?.bpm || 130
       );
       globalDjSetEngine.play();
-      setIsPlaying(true);
+      setInternalIsPlaying(true);
     }
   };
 
@@ -241,7 +256,7 @@ export default function DjSetPlayer({
 
     if (!isPlaying) {
       globalDjSetEngine.play();
-      setIsPlaying(true);
+      setInternalIsPlaying(true);
     }
 
     const startTime = performance.now();

@@ -45,8 +45,10 @@ import {
   Disc
 } from 'lucide-react';
 import { TrackDef, DeepAnalysisData, HotCue } from '../types';
-import { deepAudioAnalyze, freqToNote } from '../lib/deepAudioAnalysis';
+import { deepAudioAnalyze, freqToNote, decodeAudio } from '../lib/deepAudioAnalysis';
 import { fetchOnlineTrackMetadata, mergeCandidateIntoTrack, OnlineLookupResult } from '../lib/onlineMetadataService';
+import { generateMixedInKeyStructure } from '../lib/mixedInKeyDetection';
+import { getTrackWaveformSlice, getTrackOverviewWaveform } from '../lib/waveformGenerator';
 
 interface TrackAnalysisViewProps {
   track: TrackDef;
@@ -220,6 +222,32 @@ export default function TrackAnalysisView({
     loopEndSecRef.current = loopEndSec;
   }, [loopEndSec]);
 
+  // AudioBuffer caching for bit-perfect micro-transient waveform rendering
+  const audioBufferRef = useRef<AudioBuffer | null>(track.deepAnalysis?.audioBuffer || null);
+  const [, setBufferVersion] = useState(0);
+
+  useEffect(() => {
+    let isCancelled = false;
+    if (track.deepAnalysis?.audioBuffer) {
+      audioBufferRef.current = track.deepAnalysis.audioBuffer;
+      return;
+    }
+    const source = track.file || track.url || `/api/library/stream?file=${encodeURIComponent(track.filePath || track.filename || '')}`;
+    decodeAudio(source)
+      .then(buf => {
+        if (!isCancelled) {
+          audioBufferRef.current = buf;
+          setBufferVersion(v => v + 1);
+        }
+      })
+      .catch(err => {
+        console.warn("AudioBuffer background decode for precision waveform:", err);
+      });
+    return () => {
+      isCancelled = true;
+    };
+  }, [track.id, track.filePath]);
+
   // Precision Beatgrid state
   const [gridOffsetMs, setGridOffsetMs] = useState<number>(0);
   const [currentBpm, setCurrentBpm] = useState<number>(track.bpm || 124);
@@ -243,22 +271,45 @@ export default function TrackAnalysisView({
     comments: track.comments || ''
   });
 
-  // Hotcues 1-8 System
+  // Hotcues 1-8 System (Mixed In Key 11 Intelligent Phrasing Engine)
   const [hotCues, setHotCues] = useState<HotCue[]>(() => {
-    if (track.hotCues && track.hotCues.length > 0) return track.hotCues;
-    const dur = track.duration || 180;
-    return [
-      { id: 'cue_1', slot: 1, timeMs: 100, name: 'AutoGrid', type: 1, color: '#22c55e' },
-      { id: 'cue_2', slot: 2, timeMs: Math.round(dur * 0.15 * 1000), name: 'Bass Entry', type: 1, color: '#3b82f6' },
-      { id: 'cue_3', slot: 3, timeMs: Math.round(dur * 0.45 * 1000), name: 'Main Drop', type: 1, color: '#f59e0b' },
-      { id: 'cue_4', slot: 4, timeMs: Math.round(dur * 0.65 * 1000), name: 'Breakdown', type: 1, color: '#a855f7' },
-      { id: 'cue_5', slot: 5, timeMs: Math.round(dur * 0.88 * 1000), name: 'Outro Mix', type: 1, color: '#ef4444' }
-    ];
+    if (track.hotCues && track.hotCues.length >= 7) return track.hotCues;
+    const structure = generateMixedInKeyStructure({
+      duration: track.duration || 180,
+      bpm: currentBpm || track.bpm || 124,
+      camelotKey: track.key || '8A',
+      baseEnergy: track.energy || 7,
+      firstBeatSec: (track as any).firstBeatSec || 0.05
+    });
+    return structure.hotCues;
   });
   const hotCuesRef = useRef<HotCue[]>(hotCues);
   useEffect(() => {
     hotCuesRef.current = hotCues;
   }, [hotCues]);
+
+  // Overview Stripe dragging state
+  const overviewStripeRef = useRef<HTMLDivElement>(null);
+  const [isOverviewDragging, setIsOverviewDragging] = useState(false);
+
+  useEffect(() => {
+    if (!isOverviewDragging) return;
+    const onMouseMove = (e: MouseEvent) => {
+      if (!overviewStripeRef.current) return;
+      const rect = overviewStripeRef.current.getBoundingClientRect();
+      const clickNorm = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      handleSeek(clickNorm * duration);
+    };
+    const onMouseUp = () => {
+      setIsOverviewDragging(false);
+    };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [isOverviewDragging, duration]);
 
   const [selectedCueSlot, setSelectedCueSlot] = useState<number>(1);
   const [deckTabMode, setDeckTabMode] = useState<'CUE' | 'MOVE' | 'GRID'>('CUE');
@@ -696,11 +747,15 @@ export default function TrackAnalysisView({
         key: track.key
       });
       setAnalysisData(result);
+      if (result.audioBuffer) {
+        audioBufferRef.current = result.audioBuffer;
+      }
       setCurrentBpm(result.beatGrid.bpm);
 
       // Save analysis to track in parent state
       onUpdateTrack(track.filePath || track.id, {
         deepAnalysis: result,
+        waveform: result.waveform,
         beatGrid: result.beatGrid,
         loudness: result.loudness,
         spectral: result.spectral,
@@ -1344,7 +1399,27 @@ export default function TrackAnalysisView({
 
   // Renders the Precision Waveform Deck matching the hardware DJ layout
   const renderPrecisionDeck = (heightClass = 'h-48', showToolbar = true) => {
-    const beats = analysisData?.beatGrid.beats || [];
+    const firstBeatAnchor = (analysisData?.beatGrid?.firstBeatSec !== undefined && !isNaN(analysisData.beatGrid.firstBeatSec))
+      ? analysisData.beatGrid.firstBeatSec
+      : ((track as any).beatGrid?.firstBeatSec !== undefined && !isNaN((track as any).beatGrid.firstBeatSec))
+        ? (track as any).beatGrid.firstBeatSec
+        : ((track as any).firstBeatSec !== undefined && !isNaN((track as any).firstBeatSec))
+          ? (track as any).firstBeatSec
+          : 0.05;
+    const effectiveGridOffsetSec = gridOffsetMs / 1000;
+    const gridAnchorSec = firstBeatAnchor + effectiveGridOffsetSec;
+    const beatIntervalSec = 60 / currentBpm;
+
+    const rawBeats = (analysisData?.beatGrid?.beats && analysisData.beatGrid.beats.length > 0)
+      ? analysisData.beatGrid.beats
+      : ((track as any).beatGrid?.beats && (track as any).beatGrid.beats.length > 0)
+        ? (track as any).beatGrid.beats
+        : Array.from(
+            { length: Math.ceil((duration || 180) / beatIntervalSec) + 16 },
+            (_, idx) => firstBeatAnchor + idx * beatIntervalSec
+          );
+
+    const beats = rawBeats.map(b => b + effectiveGridOffsetSec);
     const downbeats = analysisData?.beatGrid.downbeats || [];
 
     // Remaining and total time
@@ -1359,7 +1434,6 @@ export default function TrackAnalysisView({
 
     // Stationary paging window calculation (stands still in current zoom level; playhead moves across)
     const beatsPerWindow = Math.max(4, Math.round(32 / zoomLevel));
-    const beatIntervalSec = 60 / currentBpm;
     const windowDuration = beatsPerWindow * beatIntervalSec;
     const windowIndex = Math.max(0, Math.floor(currentTime / Math.max(0.1, windowDuration)));
     const windowStart = windowIndex * windowDuration;
@@ -1373,16 +1447,26 @@ export default function TrackAnalysisView({
     const currentCueSecPart = (currentCueTimeSec % 60).toFixed(1).padStart(4, '0');
     const cueTimeFormatted = `${currentCueMin}: ${currentCueSecPart}`;
 
-    // Macro Structure Sections for Overview Stripe
-    const MACRO_SECTIONS = [
-      { name: 'INTRO', startPct: 0, endPct: 14, color: 'rgba(37, 99, 235, 0.45)', border: '#3b82f6', text: '#93c5fd' },
-      { name: 'BASS ENTRY', startPct: 14, endPct: 32, color: 'rgba(8, 145, 178, 0.45)', border: '#06b6d4', text: '#67e8f9' },
-      { name: 'BUILD-UP', startPct: 32, endPct: 44, color: 'rgba(217, 119, 6, 0.45)', border: '#f59e0b', text: '#fde68a' },
-      { name: 'MAIN DROP', startPct: 44, endPct: 66, color: 'rgba(220, 38, 38, 0.55)', border: '#ef4444', text: '#fca5a5' },
-      { name: 'BREAKDOWN', startPct: 66, endPct: 76, color: 'rgba(124, 58, 237, 0.45)', border: '#a855f7', text: '#ddd6fe' },
-      { name: 'DROP 2', startPct: 76, endPct: 88, color: 'rgba(234, 88, 12, 0.55)', border: '#f97316', text: '#fed7aa' },
-      { name: 'OUTRO', startPct: 88, endPct: 100, color: 'rgba(5, 150, 105, 0.45)', border: '#10b981', text: '#a7f3d0' }
-    ];
+    // Macro Structure Sections for Overview Stripe (Continuous Mixed In Key 11 Macro Areas)
+    const effectiveSegments = (track.segments && track.segments.length >= 6)
+      ? track.segments
+      : generateMixedInKeyStructure({
+          duration: duration || track.duration || 180,
+          bpm: currentBpm || track.bpm || 124,
+          camelotKey: track.key || '8A',
+          baseEnergy: track.energy || 7,
+          firstBeatSec: (track as any).firstBeatSec || 0.05
+        }).segments;
+
+    const MACRO_SECTIONS = effectiveSegments.map(seg => ({
+      name: seg.name.toUpperCase(),
+      startPct: Math.max(0, Math.min(100, (seg.startSec / (duration || 1)) * 100)),
+      endPct: Math.max(0, Math.min(100, (seg.endSec / (duration || 1)) * 100)),
+      color: `${seg.color}35`,
+      border: seg.color,
+      text: '#FFFFFF',
+      startSec: seg.startSec
+    }));
 
     return (
       <div className="flex flex-col gap-2 w-full select-none bg-[#090B0E] border border-[#242936] rounded-xl p-3 shadow-2xl relative">
@@ -1658,7 +1742,8 @@ export default function TrackAnalysisView({
 
         {/* 3. MAIN STATIONARY PRECISION WAVEFORM (Standing Waveform, Gliding Red Playhead) */}
         <div 
-          className={`${heightClass} bg-[#06080B] rounded-xl border border-[#242936] relative overflow-hidden cursor-pointer flex flex-col justify-between shadow-inner group select-none`}
+          className={`${heightClass} rounded-xl border border-[#1e2a3e] relative overflow-hidden cursor-pointer flex flex-col justify-between shadow-2xl group select-none`}
+          style={{ background: 'linear-gradient(180deg, #020b18 0%, #061836 50%, #030f24 100%)' }}
           onClick={(e) => {
             const rect = e.currentTarget.getBoundingClientRect();
             const clickNorm = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
@@ -1694,7 +1779,7 @@ export default function TrackAnalysisView({
           )}
 
           {/* Beatgrid Vertical Lines & Downbeat Badges */}
-          <div className="absolute inset-0 pointer-events-none z-10">
+          <div id="precision-beatgrid-lines-container" className="absolute inset-0 pointer-events-none z-10">
             {beats.map((bSec, bIdx) => {
               if (bSec < windowStart || bSec > windowEnd) return null;
               const xPct = ((bSec - windowStart) / windowDuration) * 100;
@@ -1706,6 +1791,7 @@ export default function TrackAnalysisView({
               return (
                 <div 
                   key={bIdx}
+                  data-beat-line="true"
                   style={{ left: `${xPct}%` }}
                   className="absolute top-0 bottom-0 pointer-events-none -translate-x-1/2"
                 >
@@ -1728,7 +1814,7 @@ export default function TrackAnalysisView({
             })}
           </div>
 
-          {/* Hot Cue Flags on Waveform */}
+          {/* Hot Cue Flags on Waveform (Styled matching Mixed In Key Reference Screenshot) */}
           {hotCues.map(cue => {
             const cueSec = cue.timeMs / 1000;
             if (cueSec < windowStart || cueSec > windowEnd) return null;
@@ -1738,118 +1824,164 @@ export default function TrackAnalysisView({
               <div 
                 key={cue.id}
                 style={{ left: `${xPct}%` }}
-                className="absolute top-0 bottom-0 pointer-events-none z-25 -translate-x-1/2 flex flex-col items-center"
+                className="absolute top-0 bottom-0 pointer-events-none z-25 -translate-x-[1px] flex flex-col items-start"
               >
-                <div 
-                  className="px-1.5 py-0.5 rounded text-black font-black text-[9px] shadow-lg flex items-center gap-1 border border-white/80"
-                  style={{ backgroundColor: cue.color || '#22c55e' }}
-                >
-                  <span>[{cue.slot}]</span>
-                  <span className="truncate max-w-[80px]">{cue.name}</span>
+                {/* Reference style: White right-pointing triangular flag + clean text */}
+                <div className="flex items-center gap-1 -translate-y-0.5 pt-1 pl-0 select-none">
+                  <svg width="12" height="12" viewBox="0 0 12 12" className="shrink-0 drop-shadow">
+                    <polygon points="0,0 12,6 0,12" fill="#FFFFFF" />
+                  </svg>
+                  <span className="text-white font-sans font-bold text-[12px] tracking-tight leading-none drop-shadow">
+                    Cue {cue.slot}
+                  </span>
                 </div>
-                <div className="w-[2px] flex-1" style={{ backgroundColor: cue.color || '#22c55e' }} />
+                {/* Crisp vertical solid white hairline dropping through waveform */}
+                <div className="w-[1.5px] flex-1 bg-white shadow-[0_0_8px_rgba(255,255,255,0.9)]" />
               </div>
             );
           })}
 
-          {/* Fine High-Definition Mirrored SVG Spectral Waveform */}
+          {/* High-Definition Multi-Layered SVG Waveform matching Reference Image */}
           <div className="absolute inset-0 pointer-events-none z-0 flex items-center">
             <svg viewBox="0 0 1000 200" preserveAspectRatio="none" className="w-full h-full">
               <defs>
-                <linearGradient id="fineSpectralPlayed" x1="0%" y1="0%" x2="0%" y2="100%">
-                  <stop offset="0%" stopColor="#06B6D4" stopOpacity="1" />
-                  <stop offset="20%" stopColor="#3B82F6" stopOpacity="0.9" />
-                  <stop offset="42%" stopColor="#F59E0B" stopOpacity="0.95" />
-                  <stop offset="50%" stopColor="#EF4444" stopOpacity="1" />
-                  <stop offset="58%" stopColor="#F59E0B" stopOpacity="0.95" />
-                  <stop offset="80%" stopColor="#3B82F6" stopOpacity="0.9" />
-                  <stop offset="100%" stopColor="#06B6D4" stopOpacity="1" />
+                {/* Luminous Body Envelope (Smooth glowing translucent blue/cyan) */}
+                <linearGradient id="bodyEnvelopeGradPlayed" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stopColor="#0077ff" stopOpacity="0.60" />
+                  <stop offset="25%" stopColor="#00aaff" stopOpacity="0.50" />
+                  <stop offset="50%" stopColor="#00e5ff" stopOpacity="0.65" />
+                  <stop offset="75%" stopColor="#00aaff" stopOpacity="0.50" />
+                  <stop offset="100%" stopColor="#0077ff" stopOpacity="0.60" />
                 </linearGradient>
-                <linearGradient id="fineSpectralUnplayed" x1="0%" y1="0%" x2="0%" y2="100%">
-                  <stop offset="0%" stopColor="#06B6D4" stopOpacity="0.45" />
-                  <stop offset="20%" stopColor="#3B82F6" stopOpacity="0.40" />
-                  <stop offset="42%" stopColor="#F59E0B" stopOpacity="0.45" />
-                  <stop offset="50%" stopColor="#EF4444" stopOpacity="0.55" />
-                  <stop offset="58%" stopColor="#F59E0B" stopOpacity="0.45" />
-                  <stop offset="80%" stopColor="#3B82F6" stopOpacity="0.40" />
-                  <stop offset="100%" stopColor="#06B6D4" stopOpacity="0.45" />
+                <linearGradient id="bodyEnvelopeGradUnplayed" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stopColor="#0077ff" stopOpacity="0.32" />
+                  <stop offset="25%" stopColor="#00aaff" stopOpacity="0.25" />
+                  <stop offset="50%" stopColor="#00e5ff" stopOpacity="0.35" />
+                  <stop offset="75%" stopColor="#00aaff" stopOpacity="0.25" />
+                  <stop offset="100%" stopColor="#0077ff" stopOpacity="0.32" />
                 </linearGradient>
-                <linearGradient id="coreBassGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                  <stop offset="0%" stopColor="#DC2626" stopOpacity="0.95" />
-                  <stop offset="50%" stopColor="#9333EA" stopOpacity="1" />
-                  <stop offset="100%" stopColor="#DC2626" stopOpacity="0.95" />
+
+                {/* Neon Cyan Inner Core Ribbon */}
+                <linearGradient id="coreRibbonGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stopColor="#00f5ff" stopOpacity="0.9" />
+                  <stop offset="50%" stopColor="#ffffff" stopOpacity="1" />
+                  <stop offset="100%" stopColor="#00f5ff" stopOpacity="0.9" />
                 </linearGradient>
+
+                {/* Ultra-Fine Razor Transient Needles (Electric Ice Blue / Bright Cyan) */}
+                <linearGradient id="needleGradPlayed" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="200">
+                  <stop offset="0%" stopColor="#00ffff" stopOpacity="1.0" />
+                  <stop offset="35%" stopColor="#38bdf8" stopOpacity="0.98" />
+                  <stop offset="50%" stopColor="#0284c7" stopOpacity="0.92" />
+                  <stop offset="65%" stopColor="#38bdf8" stopOpacity="0.98" />
+                  <stop offset="100%" stopColor="#00ffff" stopOpacity="1.0" />
+                </linearGradient>
+                <linearGradient id="needleGradUnplayed" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="200">
+                  <stop offset="0%" stopColor="#00ffff" stopOpacity="0.95" />
+                  <stop offset="35%" stopColor="#00d2ff" stopOpacity="0.90" />
+                  <stop offset="50%" stopColor="#0284c7" stopOpacity="0.80" />
+                  <stop offset="65%" stopColor="#00d2ff" stopOpacity="0.90" />
+                  <stop offset="100%" stopColor="#00ffff" stopOpacity="0.95" />
+                </linearGradient>
+
+                {/* Bottom Energy Floor Contour Gradient */}
+                <linearGradient id="bottomFloorGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stopColor="#00f0ff" stopOpacity="0.42" />
+                  <stop offset="50%" stopColor="#06b6d4" stopOpacity="0.25" />
+                  <stop offset="100%" stopColor="#022c3b" stopOpacity="0.05" />
+                </linearGradient>
+
+                {/* Playhead Mask for Smooth Sub-Pixel Transition */}
+                <clipPath id="playheadMask">
+                  <rect x="0" y="0" width={`${Math.max(0, Math.min(1000, (playheadPct / 100) * 1000))}`} height="200" />
+                </clipPath>
               </defs>
 
               {/* Horizontal Center Baseline */}
-              <line x1="0" y1="100" x2="1000" y2="100" stroke="#1E2433" strokeWidth="0.8" />
+              <line x1="0" y1="100" x2="1000" y2="100" stroke="#0e223d" strokeWidth="0.8" opacity="0.6" />
 
-              {/* Playhead Mask for Smooth Sub-Pixel Color Transition */}
-              <clipPath id="playheadMask">
-                <rect x="0" y="0" width={`${Math.max(0, Math.min(1000, (playheadPct / 100) * 1000))}`} height="200" />
-              </clipPath>
-
-              {/* 720 High-Definition Micro-Slices across the Window */}
               {(() => {
-                const count = 720;
-                const slices = [];
+                const count = 480;
+                const sliceWindowSec = windowDuration / count;
+                const sliceMetrics = [];
                 for (let i = 0; i < count; i++) {
                   const sliceTime = windowStart + (i / count) * windowDuration;
-                  const x = (i / count) * 1000 + 0.2;
-                  const w = (1000 / count) * 0.85;
-
-                  const beatPhase = ((sliceTime / beatIntervalSec) % 1 + 1) % 1;
-                  const kickTransient = Math.max(0, 1 - beatPhase * 3.4);
-                  const isDownbeatSlice = (Math.floor(Math.max(0, sliceTime - (analysisData?.beatGrid.firstBeatSec || 0)) / beatIntervalSec) % 4 === 0);
-                  const downbeatBoost = isDownbeatSlice ? 1.25 : 1.0;
-                  
-                  const midWave = Math.sin(sliceTime * 3.1) * 0.25 + 0.5;
-                  const highSpike = Math.pow(Math.abs(Math.sin(sliceTime * 14)), 5) * 0.35;
-                  const totalAmp = Math.min(0.96, Math.max(0.10, (kickTransient * 0.65 * downbeatBoost + midWave * 0.28 + highSpike * 0.22)));
-                  
-                  const h = Math.round(totalAmp * 92);
-                  const yTop = 100 - h;
-                  const hTotal = h * 2;
-                  const coreH = Math.round(h * 0.45);
-                  const coreTop = 100 - coreH;
-                  const coreTotal = coreH * 2;
-
-                  slices.push({
-                    x, w, yTop, hTotal, coreTop, coreTotal, hasCore: h > 20, isKick: kickTransient > 0.45
+                  const m = getTrackWaveformSlice(
+                    track,
+                    analysisData,
+                    sliceTime,
+                    duration,
+                    gridAnchorSec,
+                    beatIntervalSec,
+                    audioBufferRef.current,
+                    sliceWindowSec
+                  );
+                  sliceMetrics.push({
+                    x: (i / count) * 1000 + 0.2,
+                    w: (1000 / count) * 0.85,
+                    ...m
                   });
                 }
 
+                // 1. Bottom Floor Area Path
+                const floorPts = sliceMetrics.map(s => `L ${s.x.toFixed(1)} ${(200 - s.floorAmp * 45).toFixed(1)}`).join(' ');
+                const floorPath = `M 0 200 ${floorPts} L 1000 200 Z`;
+
+                // 2. Luminous Blue Body Envelope Path (Rounded lobes in drops, smooth ribbon elsewhere)
+                const bodyUpper = sliceMetrics.map(s => `L ${s.x.toFixed(1)} ${(100 - s.bodyAmp * 66).toFixed(1)}`).join(' ');
+                const bodyLower = [...sliceMetrics].reverse().map(s => `L ${s.x.toFixed(1)} ${(100 + s.bodyAmp * 66).toFixed(1)}`).join(' ');
+                const bodyEnvelopePath = `M 0 ${(100 - sliceMetrics[0].bodyAmp * 66).toFixed(1)} ${bodyUpper} L 1000 ${(100 + sliceMetrics[sliceMetrics.length - 1].bodyAmp * 66).toFixed(1)} ${bodyLower} Z`;
+
+                // 3. Neon Cyan Inner Core Path
+                const coreUpper = sliceMetrics.map(s => `L ${s.x.toFixed(1)} ${(100 - s.coreAmp * 40).toFixed(1)}`).join(' ');
+                const coreLower = [...sliceMetrics].reverse().map(s => `L ${s.x.toFixed(1)} ${(100 + s.coreAmp * 40).toFixed(1)}`).join(' ');
+                const coreRibbonPath = `M 0 ${(100 - sliceMetrics[0].coreAmp * 40).toFixed(1)} ${coreUpper} L 1000 ${(100 + sliceMetrics[sliceMetrics.length - 1].coreAmp * 40).toFixed(1)} ${coreLower} Z`;
+
+                // 4. Ultra-fine Needle Lines (High-contrast electric cyan needles)
+                const needles = sliceMetrics.map(s => {
+                  const h = Math.round(s.needleAmp * 92);
+                  return {
+                    x: s.x,
+                    yTop: 100 - h,
+                    yBottom: 100 + h,
+                    height: Math.max(2, h * 2),
+                    isKick: s.isKick,
+                    isDownbeat: s.isDownbeat
+                  };
+                });
+
                 return (
                   <>
-                    {/* Layer 1: Dim/Unplayed Base */}
-                    <g fill="url(#fineSpectralUnplayed)">
-                      {slices.map((s, i) => (
-                        <rect key={i} x={s.x} y={s.yTop} width={s.w} height={s.hTotal} rx={0.5} />
-                      ))}
-                    </g>
-                    <g fill="url(#coreBassGrad)" opacity="0.45">
-                      {slices.filter(s => s.hasCore).map((s, i) => (
-                        <rect key={i} x={s.x} y={s.coreTop} width={s.w} height={s.coreTotal} rx={0.4} />
+                    {/* Layer 1: Bottom Energy Floor Contour */}
+                    <path d={floorPath} fill="url(#bottomFloorGrad)" stroke="#00f0ff" strokeWidth="0.8" strokeOpacity="0.45" />
+
+                    {/* Layer 2: Base Unplayed Audio Body Envelope */}
+                    <path d={bodyEnvelopePath} fill="url(#bodyEnvelopeGradUnplayed)" stroke="#00d2ff" strokeWidth="1.2" strokeOpacity="0.50" />
+
+                    {/* Layer 3: Unplayed Fine Transient Needles */}
+                    <g fill="url(#needleGradUnplayed)">
+                      {needles.map((n, i) => (
+                        <rect key={i} x={n.x - 0.7} y={n.yTop} width={1.4} height={n.height} rx={0.7} />
                       ))}
                     </g>
 
-                    {/* Layer 2: Bright Played Overlay clipped with playheadMask */}
+                    {/* Layer 4: Played Active Section (Clipped to Playhead) */}
                     <g clipPath="url(#playheadMask)">
-                      <g fill="url(#fineSpectralPlayed)">
-                        {slices.map((s, i) => (
-                          <rect key={i} x={s.x} y={s.yTop} width={s.w} height={s.hTotal} rx={0.5} />
+                      {/* Played Body Envelope */}
+                      <path d={bodyEnvelopePath} fill="url(#bodyEnvelopeGradPlayed)" stroke="#00ffff" strokeWidth="1.5" strokeOpacity="0.85" />
+                      {/* Neon Core Ribbon */}
+                      <path d={coreRibbonPath} fill="url(#coreRibbonGrad)" opacity="0.85" />
+                      {/* Bright Active Needles */}
+                      <g fill="url(#needleGradPlayed)">
+                        {needles.map((n, i) => (
+                          <rect key={i} x={n.x - 0.7} y={n.yTop} width={1.4} height={n.height} rx={0.7} />
                         ))}
                       </g>
-                      <g fill="url(#coreBassGrad)" opacity="0.95">
-                        {slices.filter(s => s.hasCore).map((s, i) => (
-                          <rect key={i} x={s.x} y={s.coreTop} width={s.w} height={s.coreTotal} rx={0.4} />
-                        ))}
-                      </g>
-                      {/* Transient Peak White Ticks */}
-                      {slices.filter(s => s.isKick).map((s, i) => (
+                      {/* Downbeat Apex White Ticks */}
+                      {needles.filter(n => n.isDownbeat).map((n, i) => (
                         <g key={i}>
-                          <line x1={s.x} y1={s.yTop} x2={s.x + s.w} y2={s.yTop} stroke="#FFFFFF" strokeWidth={1.2} opacity={0.95} />
-                          <line x1={s.x} y1={s.yTop + s.hTotal} x2={s.x + s.w} y2={s.yTop + s.hTotal} stroke="#FFFFFF" strokeWidth={1.2} opacity={0.95} />
+                          <line x1={n.x - 1.5} y1={n.yTop} x2={n.x + 1.5} y2={n.yTop} stroke="#FFFFFF" strokeWidth={1.5} />
+                          <line x1={n.x - 1.5} y1={n.yBottom} x2={n.x + 1.5} y2={n.yBottom} stroke="#FFFFFF" strokeWidth={1.5} />
                         </g>
                       ))}
                     </g>
@@ -1874,52 +2006,62 @@ export default function TrackAnalysisView({
 
         </div>
 
-        {/* 4. OVERVIEW STRIPE (Mini Waveform with Song Structure Macro Areas) */}
+        {/* 4. OVERVIEW STRIPE (Mini Waveform with Song Structure Macro Areas & Mixed In Key Cue Flags) */}
         <div className="flex flex-col gap-1">
           <div 
-            className="h-9 bg-[#090B0E] rounded-lg border border-[#242936] relative overflow-hidden cursor-pointer group flex items-center"
-            onClick={(e) => {
-              const rect = e.currentTarget.getBoundingClientRect();
-              const clickNorm = (e.clientX - rect.left) / rect.width;
+            ref={overviewStripeRef}
+            className="h-10 bg-[#090B0E] rounded-lg border border-[#242936] relative overflow-hidden cursor-pointer group flex items-center select-none"
+            onMouseDown={(e) => {
+              const rect = overviewStripeRef.current?.getBoundingClientRect();
+              if (!rect) return;
+              const clickNorm = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
               handleSeek(clickNorm * duration);
+              setIsOverviewDragging(true);
             }}
-            title="Klicken um im Track zu navigieren"
+            title="Klicken oder Ziehen um schnell an eine Position zu springen"
           >
-            {/* Song Macro Structure Areas */}
-            <div className="absolute inset-0 flex pointer-events-none z-0">
+            {/* Song Macro Structure Areas (Continuous Sections) */}
+            <div className="absolute inset-0 flex z-0">
               {MACRO_SECTIONS.map((sec, idx) => (
                 <div 
                   key={idx}
-                  className="h-full border-r border-[#242936] flex flex-col justify-between px-1 py-0.5"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (sec.startSec !== undefined) handleSeek(sec.startSec);
+                  }}
+                  className="h-full border-r border-[#242936] flex flex-col justify-between px-1 py-0.5 cursor-pointer hover:brightness-135 transition-all"
                   style={{ 
                     width: `${sec.endPct - sec.startPct}%`,
                     backgroundColor: sec.color,
                     borderTop: `2px solid ${sec.border}`
                   }}
+                  title={`${sec.name} (${Math.floor(sec.startSec / 60)}:${Math.floor(sec.startSec % 60).toString().padStart(2, '0')}) - Klick zum Anspringen`}
                 >
-                  <span className="text-[8px] font-mono font-bold tracking-wider truncate" style={{ color: sec.text }}>
+                  <span className="text-[8px] font-mono font-black tracking-wider truncate" style={{ color: sec.text }}>
                     {sec.name}
                   </span>
                 </div>
               ))}
             </div>
 
-            {/* Mini Waveform Bars */}
-            <div className="absolute inset-0 flex items-center justify-between px-1 pointer-events-none z-10">
-              {Array.from({ length: 96 }).map((_, idx) => {
-                const h = 20 + Math.sin(idx * 0.22) * 35 + Math.cos(idx * 0.48) * 25;
-                const isPlayed = (idx / 96) <= (currentTime / (duration || 1));
-                return (
-                  <div 
-                    key={idx} 
-                    className="w-[1.5px] rounded-full transition-all"
-                    style={{
-                      height: `${Math.max(15, Math.min(95, h))}%`,
-                      background: isPlayed ? '#06B6D4' : '#475569'
-                    }}
-                  />
-                );
-              })}
+            {/* Mini Waveform Bars (Individual Track Profile) */}
+            <div className="absolute inset-0 flex items-center justify-between px-1 pointer-events-none z-10 opacity-80">
+              {(() => {
+                const overviewBars = getTrackOverviewWaveform(track, analysisData, 96, duration, audioBufferRef.current);
+                return overviewBars.map((h, idx) => {
+                  const isPlayed = (idx / 96) <= (currentTime / (duration || 1));
+                  return (
+                    <div 
+                      key={idx} 
+                      className="w-[1.5px] rounded-full transition-all"
+                      style={{
+                        height: `${h}%`,
+                        background: isPlayed ? '#00f0ff' : '#22384f'
+                      }}
+                    />
+                  );
+                });
+              })()}
             </div>
 
             {/* Loop Region on Overview Stripe */}
@@ -1942,24 +2084,34 @@ export default function TrackAnalysisView({
               }}
             />
 
-            {/* Cue Flags on Stripe */}
-            {hotCues.map(cue => (
-              <div 
-                key={cue.id}
-                className="absolute top-0 bottom-0 w-1 z-25 pointer-events-none"
-                style={{ 
-                  left: `${((cue.timeMs / 1000) / (duration || 1)) * 100}%`,
-                  backgroundColor: cue.color || '#f59e0b'
-                }}
-              >
+            {/* Mixed In Key 11 Style Cue Tabs on Overview Stripe */}
+            {hotCues.map(cue => {
+              const cueSec = cue.timeMs / 1000;
+              const cuePct = (cueSec / (duration || 1)) * 100;
+              return (
                 <div 
-                  className="w-2.5 h-2.5 rounded-full -translate-x-1/2 shadow-sm text-[8px] font-bold text-black flex items-center justify-center"
-                  style={{ backgroundColor: cue.color || '#f59e0b' }}
+                  key={cue.id}
+                  className="absolute top-0 bottom-0 z-25 pointer-events-auto cursor-pointer group/cue -translate-x-1/2 flex flex-col items-center"
+                  style={{ left: `${cuePct}%` }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleSeek(cueSec);
+                  }}
+                  title={`CUE ${cue.slot}: ${cue.name} (${Math.floor(cueSec / 60)}:${Math.floor(cueSec % 60).toString().padStart(2, '0')}) - Klick zum Anspringen`}
                 >
-                  {cue.slot}
+                  <div 
+                    className="px-1.5 py-0.5 rounded-t bg-[#0E182E] text-white font-black text-[8px] border-t-2 border-x border-cyan-400 shadow-md group-hover/cue:scale-110 group-hover/cue:bg-cyan-950 transition-transform"
+                    style={{ borderTopColor: cue.color || '#00d2ff' }}
+                  >
+                    CUE {cue.slot}
+                  </div>
+                  <div 
+                    className="w-[1.5px] flex-1 shadow-[0_0_6px_rgba(0,210,255,0.6)]" 
+                    style={{ backgroundColor: cue.color || '#00d2ff' }} 
+                  />
                 </div>
-              </div>
-            ))}
+              );
+            })}
 
             {/* Red Hairline Playhead */}
             <div 

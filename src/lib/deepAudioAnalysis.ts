@@ -109,7 +109,7 @@ export async function decodeAudio(fileOrUrl: File | string): Promise<AudioBuffer
  */
 export function extractMultiBandWaveform(
   buffer: AudioBuffer,
-  pointsCount: number = 1200
+  pointsCount: number = 16000
 ): WaveformData {
   const numChannels = buffer.numberOfChannels;
   const length = buffer.length;
@@ -124,7 +124,7 @@ export function extractMultiBandWaveform(
   const highBand = new Float32Array(pointsCount);
   const overallEnvelope = new Float32Array(pointsCount);
 
-  const blockSize = Math.floor(length / pointsCount);
+  const blockSize = Math.max(1, Math.floor(length / pointsCount));
 
   // Filter approximation coefficients for 3-band separation
   // Low: < 250 Hz (kicks, sub)
@@ -145,8 +145,10 @@ export function extractMultiBandWaveform(
     let prevSample = 0;
     let prevDiff = 0;
 
-    // Step across window to keep calculation extremely fast (stride = 2)
-    for (let j = start; j < end; j += 2) {
+    // Step across window (stride = 1 for micro-windows, stride = 2 for larger)
+    const stride = windowLen > 64 ? 2 : 1;
+    let steps = 0;
+    for (let j = start; j < end; j += stride) {
       const monoSample = (left[j] + right[j]) * 0.5;
       const absSample = Math.abs(monoSample);
       if (absSample > peakMax) peakMax = absSample;
@@ -167,12 +169,13 @@ export function extractMultiBandWaveform(
 
       prevDiff = diff;
       prevSample = monoSample;
+      steps++;
     }
 
-    const steps = windowLen / 2;
-    lowBand[i] = Math.min(1.0, (lowEnergy / steps) * 2.2);
-    midBand[i] = Math.min(1.0, (midEnergy / steps) * 2.8);
-    highBand[i] = Math.min(1.0, (highEnergy / steps) * 3.5);
+    const divisor = Math.max(1, steps);
+    lowBand[i] = Math.min(1.0, (lowEnergy / divisor) * 2.2);
+    midBand[i] = Math.min(1.0, (midEnergy / divisor) * 2.8);
+    highBand[i] = Math.min(1.0, (highEnergy / divisor) * 3.5);
     overallEnvelope[i] = Math.min(1.0, peakMax);
   }
 
@@ -192,7 +195,8 @@ export function extractMultiBandWaveform(
  */
 export function detectBeatGridAndTempo(
   buffer: AudioBuffer,
-  knownBpm?: number
+  knownBpm?: number,
+  bpmRange?: { minBpm: number; maxBpm: number }
 ): { beatGrid: BeatGridData; tempoVariation: TempoVariationData } {
   const sampleRate = buffer.sampleRate;
   const totalDuration = buffer.duration;
@@ -221,9 +225,11 @@ export function detectBeatGridAndTempo(
     onsets[i] = diff > 0 ? diff : 0;
   }
 
-  // Autocorrelation to find dominant beat period in range 90 - 170 BPM
-  const minLag = Math.floor((60 / 175) * envSampleRate); // ~175 BPM
-  const maxLag = Math.floor((60 / 85) * envSampleRate);  // ~85 BPM
+  // Autocorrelation to find dominant beat period in range
+  const minBpmTarget = bpmRange?.minBpm || 70;
+  const maxBpmTarget = bpmRange?.maxBpm || 180;
+  const minLag = Math.floor((60 / maxBpmTarget) * envSampleRate);
+  const maxLag = Math.floor((60 / minBpmTarget) * envSampleRate);
 
   let bestLag = 0;
   let maxCorr = -1;
@@ -563,76 +569,78 @@ export function analyzeDynamicsAndSpectrum(
   };
 }
 
+import { generateMixedInKeyStructure } from './mixedInKeyDetection';
+
 /**
- * Heuristic Mood & Style Classifier based on extracted musical features
+ * Mood, Style and Mixed In Key 11 Structure Classifier
  */
 export function classifyMoodAndStyle(
   bpm: number,
   energy: number,
-  camelotKey: string
+  camelotKey: string,
+  durationSec: number = 240,
+  waveform?: WaveformData,
+  firstBeatSec?: number
 ): { suggestedMood: string; suggestedStyle: string; segments: TrackSegment[]; hotCues: HotCue[] } {
-  const isMinor = camelotKey.endsWith('A');
+  return generateMixedInKeyStructure({
+    duration: durationSec,
+    bpm,
+    camelotKey,
+    baseEnergy: energy,
+    firstBeatSec,
+    waveform
+  });
+}
 
-  let suggestedStyle = 'Melodic House';
-  let suggestedMood = 'Treibend & Euphorisch';
-
-  if (bpm >= 134) {
-    suggestedStyle = isMinor ? 'Peaktime Techno' : 'Hard Groove / Trance';
-    suggestedMood = isMinor ? 'Dunkel & Industriell' : 'Euphorisch & Energetisch';
-  } else if (bpm >= 126) {
-    suggestedStyle = isMinor ? 'Peaktime Techno' : 'Tech House';
-    suggestedMood = 'Treibend & Hypnotisch';
-  } else if (bpm >= 120) {
-    suggestedStyle = isMinor ? 'Deep Tech / Minimal' : 'Melodic House';
-    suggestedMood = isMinor ? 'Hypnotisch & Deep' : 'Entspannt & Groovy';
-  } else {
-    suggestedStyle = 'Organic House / Downtempo';
-    suggestedMood = 'Entspannt & Atmosphärisch';
-  }
-
-  // Pre-calculated DJ phrasing segments
-  const segments: TrackSegment[] = [
-    { id: 'seg_intro', name: 'Intro', energy: Math.max(1, energy - 3), key: camelotKey, duration: 32, startSec: 0, endSec: 32, color: '#3B82F6' },
-    { id: 'seg_build1', name: 'Build-Up 1', energy: Math.max(1, energy - 1), key: camelotKey, duration: 32, startSec: 32, endSec: 64, color: '#A855F7' },
-    { id: 'seg_drop1', name: 'Drop 1', energy: Math.min(10, energy + 2), key: camelotKey, duration: 64, startSec: 64, endSec: 128, color: '#EF4444' },
-    { id: 'seg_break', name: 'Breakdown', energy: Math.max(1, energy - 2), key: camelotKey, duration: 32, startSec: 128, endSec: 160, color: '#F59E0B' },
-    { id: 'seg_drop2', name: 'Peak Drop 2', energy: Math.min(10, energy + 3), key: camelotKey, duration: 64, startSec: 160, endSec: 224, color: '#F43F5E' },
-    { id: 'seg_outro', name: 'Outro', energy: Math.max(1, energy - 4), key: camelotKey, duration: 32, startSec: 224, endSec: 256, color: '#10B981' }
-  ];
-
-  // Professional Hot Cues
-  const hotCues: HotCue[] = [
-    { id: 'cue_1', slot: 1, timeMs: 0, type: 1, name: 'Intro Mix In', color: '#06B6D4' },
-    { id: 'cue_2', slot: 2, timeMs: 32000, type: 1, name: 'Bass Entry', color: '#22C55E' },
-    { id: 'cue_3', slot: 3, timeMs: 64000, type: 1, name: 'Main Drop', color: '#EF4444' },
-    { id: 'cue_4', slot: 4, timeMs: 160000, type: 1, name: 'Peak Drop 2', color: '#F43F5E' },
-    { id: 'cue_5', slot: 5, timeMs: 224000, type: 1, name: 'Outro Mix Out', color: '#10B981' }
-  ];
-
-  return { suggestedMood, suggestedStyle, segments, hotCues };
+export interface DeepAnalyzeOptions {
+  title?: string;
+  artist?: string;
+  bpm?: number;
+  key?: string;
+  bpmMode?: 'auto' | '60-120' | '70-140' | '80-160' | '90-180';
+  setBeatgrid?: boolean;
+  detectKey?: boolean;
+  detectGain?: boolean;
+  replaceLocked?: boolean;
 }
 
 /**
  * Main Master Analysis Function:
- * Decodes audio, calculates high-precision multi-band waveform, beatgrid, tempo drift,
+ * Decodes audio, calculates ultra-high-precision 16,000-point multi-band waveform, beatgrid, tempo drift,
  * harmonic key, loudness, spectrum and stereo field.
  */
 export async function deepAudioAnalyze(
   fileOrUrl: File | string,
-  existingMeta?: { title?: string; artist?: string; bpm?: number; key?: string }
+  existingMetaOrOptions?: DeepAnalyzeOptions
 ): Promise<DeepAnalysisData & { segments: TrackSegment[]; hotCues: HotCue[] }> {
   // 1. Decode Audio Buffer
   const buffer = await decodeAudio(fileOrUrl);
 
-  // 2. Multi-band Waveform
-  const waveform = extractMultiBandWaveform(buffer, 1200);
+  // 2. High-precision 16,000-point Multi-band Waveform
+  const waveform = extractMultiBandWaveform(buffer, 16000);
+
+  // Determine BPM range constraint if provided
+  let bpmRange: { minBpm: number; maxBpm: number } | undefined;
+  if (existingMetaOrOptions?.bpmMode === '60-120') bpmRange = { minBpm: 60, maxBpm: 120 };
+  else if (existingMetaOrOptions?.bpmMode === '70-140') bpmRange = { minBpm: 70, maxBpm: 140 };
+  else if (existingMetaOrOptions?.bpmMode === '80-160') bpmRange = { minBpm: 80, maxBpm: 160 };
+  else if (existingMetaOrOptions?.bpmMode === '90-180') bpmRange = { minBpm: 90, maxBpm: 180 };
+  else bpmRange = { minBpm: 70, maxBpm: 185 };
 
   // 3. Beatgrid & Tempo
-  const { beatGrid, tempoVariation } = detectBeatGridAndTempo(buffer, existingMeta?.bpm);
+  const shouldSetGrid = existingMetaOrOptions?.setBeatgrid !== false;
+  const { beatGrid, tempoVariation } = detectBeatGridAndTempo(
+    buffer, 
+    existingMetaOrOptions?.bpm,
+    bpmRange
+  );
 
   // 4. Harmonic Key & Tuning
+  const shouldDetectKey = existingMetaOrOptions?.detectKey !== false;
   const keyInfo = detectHarmonicKeyAndTuning(buffer);
-  const camelotKey = existingMeta?.key || keyInfo.camelotKey;
+  const camelotKey = (!shouldDetectKey && existingMetaOrOptions?.key) 
+    ? existingMetaOrOptions.key 
+    : (existingMetaOrOptions?.replaceLocked ? keyInfo.camelotKey : (existingMetaOrOptions?.key || keyInfo.camelotKey));
 
   // 5. Dynamics, Metering & Spatial
   const { loudness, spectral, spatial } = analyzeDynamicsAndSpectrum(buffer);
@@ -642,14 +650,22 @@ export async function deepAudioAnalyze(
   // 6. Calculate Energy rating (1-10)
   const calculatedEnergy = Math.max(1, Math.min(10, Math.round((loudness.rmsDb + 24) * 0.45 + (beatGrid.bpm - 110) * 0.08)));
 
-  // 7. Mood, Style & Phrasing
-  const classification = classifyMoodAndStyle(beatGrid.bpm, calculatedEnergy, camelotKey);
+  // 7. Mood, Style & Mixed In Key 11 Cue & Section Phrasing
+  const classification = generateMixedInKeyStructure({
+    duration: buffer.duration,
+    bpm: beatGrid.bpm,
+    camelotKey,
+    baseEnergy: calculatedEnergy,
+    firstBeatSec: beatGrid.firstBeatSec,
+    waveform
+  });
 
   return {
     analyzedAt: Date.now(),
     samplingRate: buffer.sampleRate,
     bitDepth: 24,
     channels: buffer.numberOfChannels,
+    audioBuffer: buffer, // In-memory decoded AudioBuffer for bit-perfect transient rendering
     beatGrid,
     tempoVariation,
     loudness,

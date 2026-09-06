@@ -168,6 +168,7 @@ export interface DeepAnalysisData {
   calculatedEnergy: number; // 1 to 10
   suggestedMood: string;
   suggestedStyle: string;
+  audioBuffer?: AudioBuffer; // In-memory decoded AudioBuffer for bit-perfect transient rendering
 }
 
 export interface TrackDef {
@@ -199,8 +200,9 @@ export interface TrackDef {
   file?: File;
   fileFallback?: File;
   fileHandle?: any;
-  // Deep Audio Analysis & Online Metadata Extensions
+    // Deep Audio Analysis & Online Metadata Extensions
   deepAnalysis?: DeepAnalysisData;
+  waveform?: WaveformData;
   beatGrid?: BeatGridData;
   loudness?: LoudnessData;
   spectral?: SpectralData;

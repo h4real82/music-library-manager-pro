@@ -1,5 +1,6 @@
 import React from 'react';
 import { TrackDef } from '../types';
+import { normalizeToCamelot } from '../lib/djMixerLogic';
 
 interface CamelotWheelProps {
   selectedKey: string | null;
@@ -58,35 +59,39 @@ export default function CamelotWheel({
   const size = 280;
   const center = size / 2;
 
-  // Track counts per key
+  // Track counts per normalized Camelot key
   const keyCounts = React.useMemo(() => {
     const counts: Record<string, number> = {};
     tracks.forEach(t => {
-      if (t.key) {
-        const k = t.key.toUpperCase().trim();
+      const k = normalizeToCamelot(t.key);
+      if (k) {
         counts[k] = (counts[k] || 0) + 1;
       }
     });
     return counts;
   }, [tracks]);
 
-  // Selected item info for center
+  // Normalized selected key (e.g. '10m' or '10A' -> '10A')
+  const normalizedSelectedKey = React.useMemo(() => {
+    return normalizeToCamelot(selectedKey);
+  }, [selectedKey]);
+
+  // Selected item info for center hub
   const selectedInfo = React.useMemo(() => {
-    if (!selectedKey) return null;
-    const clean = selectedKey.toUpperCase().trim();
+    if (!normalizedSelectedKey) return null;
     for (const item of CAMELOT_DATA) {
-      if (item.major === clean) {
-        return { key: item.major, note: item.majorNote, color: item.color, count: keyCounts[item.major] || 0 };
+      if (item.major === normalizedSelectedKey) {
+        return { key: item.major, note: `${item.majorNote} Dur (${item.num}d)`, color: item.color, count: keyCounts[item.major] || 0 };
       }
-      if (item.minor === clean) {
-        return { key: item.minor, note: item.minorNote, color: item.color, count: keyCounts[item.minor] || 0 };
+      if (item.minor === normalizedSelectedKey) {
+        return { key: item.minor, note: `${item.minorNote} Moll (${item.num}m)`, color: item.color, count: keyCounts[item.minor] || 0 };
       }
     }
-    return { key: clean, note: '', color: '#A855F7', count: keyCounts[clean] || 0 };
-  }, [selectedKey, keyCounts]);
+    return { key: normalizedSelectedKey, note: '', color: '#A855F7', count: keyCounts[normalizedSelectedKey] || 0 };
+  }, [normalizedSelectedKey, keyCounts]);
 
   const handleSliceClick = (key: string) => {
-    if (selectedKey === key) {
+    if (normalizedSelectedKey === key) {
       onSelectKey(null);
     } else {
       onSelectKey(key);
@@ -117,9 +122,9 @@ export default function CamelotWheel({
             const endAngle = idx * 30 + 14.5;
             const midAngle = idx * 30;
 
-            const isSelectedMajor = selectedKey === item.major;
-            const isSelectedMinor = selectedKey === item.minor;
-            const hasSelection = Boolean(selectedKey);
+            const isSelectedMajor = normalizedSelectedKey === item.major;
+            const isSelectedMinor = normalizedSelectedKey === item.minor;
+            const hasSelection = Boolean(normalizedSelectedKey);
 
             const majorCount = keyCounts[item.major] || 0;
             const minorCount = keyCounts[item.minor] || 0;
@@ -152,7 +157,7 @@ export default function CamelotWheel({
                   onClick={() => handleSliceClick(item.major)}
                   className="cursor-pointer hover:fill-opacity-95 hover:brightness-125 transition-all"
                 >
-                  <title>{`${item.major} (${item.majorNote} Dur) - ${majorCount} Track(s)`}</title>
+                  <title>{`${item.major} (${item.majorNote} Dur / ${item.num}d) - ${majorCount} Track(s)`}</title>
                 </path>
 
                 {/* Major Label */}
@@ -187,7 +192,7 @@ export default function CamelotWheel({
                   onClick={() => handleSliceClick(item.minor)}
                   className="cursor-pointer hover:fill-opacity-95 hover:brightness-125 transition-all"
                 >
-                  <title>{`${item.minor} (${item.minorNote} Moll) - ${minorCount} Track(s)`}</title>
+                  <title>{`${item.minor} (${item.minorNote} Moll / ${item.num}m) - ${minorCount} Track(s)`}</title>
                 </path>
 
                 {/* Minor Label */}

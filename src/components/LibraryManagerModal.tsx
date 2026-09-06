@@ -258,6 +258,124 @@ export default function LibraryManagerModal({
     }
   };
 
+  // Traktor-Style Batch Analysis State
+  const [showAnalyzeModal, setShowAnalyzeModal] = useState(false);
+  const [analyzeMode, setAnalyzeMode] = useState<'all' | 'special'>('all');
+  const [bpmMode, setBpmMode] = useState<'auto' | '60-120' | '70-140' | '80-160' | '90-180'>('auto');
+  const [setBeatgrid, setSetBeatgrid] = useState(true);
+  const [detectKey, setDetectKey] = useState(true);
+  const [detectGain, setDetectGain] = useState(true);
+  const [replaceLocked, setReplaceLocked] = useState(false);
+  const [parallelProcessing, setParallelProcessing] = useState(true);
+  const [isAnalyzingBatch, setIsAnalyzingBatch] = useState(false);
+  const [analyzeProgress, setAnalyzeProgress] = useState({ current: 0, total: 0, currentName: '', step: '' });
+  const [analyzeSuccessMsg, setAnalyzeSuccessMsg] = useState<string | null>(null);
+
+  const handleStartBatchAnalysis = async () => {
+    setShowAnalyzeModal(false);
+    const targetTracks = selectedPaths.size > 0
+      ? tracks.filter(t => selectedPaths.has(t.filePath || t.id))
+      : filteredTracks;
+
+    if (targetTracks.length === 0) return;
+
+    setIsAnalyzingBatch(true);
+    setAnalyzeSuccessMsg(null);
+    setAnalyzeProgress({
+      current: 0,
+      total: targetTracks.length,
+      currentName: '',
+      step: 'Starte gründliche Audio-Analyse...'
+    });
+
+    const concurrency = parallelProcessing ? 3 : 1;
+    let processedCount = 0;
+
+    const analyzeSingleTrack = async (track: TrackDef) => {
+      try {
+        const trackName = `${track.artist} - ${track.title}` || track.filename || track.id;
+        setAnalyzeProgress(prev => ({
+          ...prev,
+          currentName: trackName,
+          step: `Analysiere Beatgrid & 16.000-Punkte Waveform...`
+        }));
+
+        const source = track.file || track.url || `/api/library/stream?file=${encodeURIComponent(track.filePath || track.filename || '')}`;
+
+        const options = {
+          title: track.title,
+          artist: track.artist,
+          bpm: track.bpm,
+          key: track.key,
+          bpmMode: analyzeMode === 'special' ? bpmMode : 'auto',
+          setBeatgrid: analyzeMode === 'special' ? setBeatgrid : true,
+          detectKey: analyzeMode === 'special' ? detectKey : true,
+          detectGain: analyzeMode === 'special' ? detectGain : true,
+          replaceLocked: analyzeMode === 'special' ? replaceLocked : false
+        };
+
+        const result = await deepAudioAnalyze(source, options);
+
+        const updates: Partial<TrackDef> = {
+          bpm: result.beatGrid.bpm,
+          key: result.camelotKey,
+          energy: result.calculatedEnergy,
+          deepAnalysis: result,
+          waveform: result.waveform,
+          beatGrid: result.beatGrid,
+          loudness: result.loudness,
+          spectral: result.spectral,
+          spatial: result.spatial,
+          tempoVariation: result.tempoVariation,
+          segments: result.segments,
+          hotCues: result.hotCues,
+          duration: track.duration || result.waveform?.durationSec
+        };
+
+        if (track.filePath) {
+          await fetch('/api/library/update-track', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              filePath: track.filePath,
+              updates
+            })
+          }).catch(e => console.warn('Disk update error:', e));
+        }
+
+        onTrackUpdated(track.filePath || track.id, updates);
+        processedCount++;
+        setAnalyzeProgress(prev => ({
+          ...prev,
+          current: processedCount,
+          step: `Fertiggestellt (${processedCount}/${targetTracks.length})`
+        }));
+      } catch (err: any) {
+        console.error(`Analysis failed for ${track.title}:`, err);
+        processedCount++;
+        setAnalyzeProgress(prev => ({
+          ...prev,
+          current: processedCount
+        }));
+      }
+    };
+
+    const queue = [...targetTracks];
+    const workers = Array(Math.min(concurrency, queue.length)).fill(0).map(async () => {
+      while (queue.length > 0) {
+        const item = queue.shift();
+        if (item) {
+          await analyzeSingleTrack(item);
+        }
+      }
+    });
+
+    await Promise.all(workers);
+    setIsAnalyzingBatch(false);
+    setAnalyzeSuccessMsg(`✓ ${processedCount} Tracks gründlich analysiert! Beatgrid, BPM, Key und 16.000-Punkte Waveform wurden präzise kalibriert.`);
+    await onRefreshTracks();
+  };
+
   // File Inputs Ref
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -1059,6 +1177,217 @@ export default function LibraryManagerModal({
           </div>
         )}
 
+        {/* TRAKTOR-STYLE BATCH ANALYZE DIALOG (Matches User Reference Screenshot) */}
+        {showAnalyzeModal && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-150 p-4">
+            <div 
+              className="w-[390px] max-w-full bg-[#2c2c2c] border border-[#1b1b1b] rounded shadow-2xl overflow-hidden text-gray-200 font-sans select-none"
+              style={{ boxShadow: '0 16px 40px rgba(0,0,0,0.9), inset 0 1px 0 rgba(255,255,255,0.07)' }}
+            >
+              {/* Title Bar */}
+              <div className="py-2 text-center text-xs font-semibold text-[#d4d4d4] bg-[#242424] border-b border-[#1b1b1b] tracking-wide">
+                Analyze
+              </div>
+
+              <div className="p-5 text-xs space-y-4">
+                {/* Radio Option 1: All */}
+                <div className="flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setAnalyzeMode('all')}
+                    className={`flex items-center gap-2.5 px-3 py-1.5 rounded border transition-colors ${
+                      analyzeMode === 'all'
+                        ? 'bg-[#1e1e1e] border-[#3a3a3a] text-white'
+                        : 'bg-[#232323] border-[#303030] text-gray-400 hover:text-gray-200'
+                    }`}
+                  >
+                    <div className="w-3.5 h-3.5 rounded-full border border-[#484848] flex items-center justify-center bg-[#141414]">
+                      {analyzeMode === 'all' && (
+                        <div className="w-2 h-2 rounded-full bg-[#00d2ff] shadow-[0_0_8px_#00d2ff]" />
+                      )}
+                    </div>
+                    <span className="font-semibold text-xs text-white">All</span>
+                  </button>
+
+                  <span className="text-[#a8a8a8] text-xs font-medium pr-1">
+                    Automatic BPM, Set Beatgrid
+                  </span>
+                </div>
+
+                {/* Radio Option 2: Special */}
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setAnalyzeMode('special')}
+                    className={`flex items-center gap-2.5 px-3 py-1.5 rounded border transition-colors ${
+                      analyzeMode === 'special'
+                        ? 'bg-[#1e1e1e] border-[#3a3a3a] text-white'
+                        : 'bg-[#232323] border-[#303030] text-gray-400 hover:text-gray-200'
+                    }`}
+                  >
+                    <div className="w-3.5 h-3.5 rounded-full border border-[#484848] flex items-center justify-center bg-[#141414]">
+                      {analyzeMode === 'special' && (
+                        <div className="w-2 h-2 rounded-full bg-[#00d2ff] shadow-[0_0_8px_#00d2ff]" />
+                      )}
+                    </div>
+                    <span className="font-semibold text-xs text-white">Special</span>
+                  </button>
+
+                  {/* Indented Options under Special */}
+                  <div className="pl-6 mt-3 space-y-2">
+                    {/* BPM Label & Dropdown */}
+                    <div className="space-y-1">
+                      <div className="bg-[#242424] px-2.5 py-1 text-[11px] font-medium text-[#888888] rounded-sm">
+                        BPM
+                      </div>
+                      <div className="relative">
+                        <select
+                          disabled={analyzeMode !== 'special'}
+                          value={bpmMode}
+                          onChange={(e) => setBpmMode(e.target.value as any)}
+                          className="w-full appearance-none bg-[#1a1a1a] border border-[#333333] rounded-sm px-3 py-1.5 text-xs text-[#00d2ff] font-medium focus:outline-none focus:border-[#00d2ff] disabled:opacity-40 cursor-pointer"
+                        >
+                          <option value="auto">Automatic</option>
+                          <option value="60-120">60 - 120</option>
+                          <option value="70-140">70 - 140</option>
+                          <option value="80-160">80 - 160</option>
+                          <option value="90-180">90 - 180</option>
+                        </select>
+                        <div className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[#00d2ff] text-[10px]">
+                          ▼
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Set Beatgrid Checkbox */}
+                    <label className="flex items-center justify-between bg-[#242424] px-2.5 py-1.5 rounded-sm cursor-pointer hover:bg-[#2a2a2a] transition-colors">
+                      <span className="text-[11px] text-[#c0c0c0]">Set Beatgrid</span>
+                      <input
+                        type="checkbox"
+                        disabled={analyzeMode !== 'special'}
+                        checked={setBeatgrid}
+                        onChange={(e) => setSetBeatgrid(e.target.checked)}
+                        className="w-3.5 h-3.5 accent-[#00d2ff] rounded-sm cursor-pointer"
+                      />
+                    </label>
+
+                    {/* Key Checkbox */}
+                    <label className="flex items-center justify-between bg-[#242424] px-2.5 py-1.5 rounded-sm cursor-pointer hover:bg-[#2a2a2a] transition-colors">
+                      <span className="text-[11px] text-[#c0c0c0]">Key</span>
+                      <input
+                        type="checkbox"
+                        disabled={analyzeMode !== 'special'}
+                        checked={detectKey}
+                        onChange={(e) => setDetectKey(e.target.checked)}
+                        className="w-3.5 h-3.5 accent-[#00d2ff] rounded-sm cursor-pointer"
+                      />
+                    </label>
+
+                    {/* Gain Checkbox */}
+                    <label className="flex items-center justify-between bg-[#242424] px-2.5 py-1.5 rounded-sm cursor-pointer hover:bg-[#2a2a2a] transition-colors">
+                      <span className="text-[11px] text-[#c0c0c0]">Gain</span>
+                      <input
+                        type="checkbox"
+                        disabled={analyzeMode !== 'special'}
+                        checked={detectGain}
+                        onChange={(e) => setDetectGain(e.target.checked)}
+                        className="w-3.5 h-3.5 accent-[#00d2ff] rounded-sm cursor-pointer"
+                      />
+                    </label>
+
+                    {/* Replace Locked Values Checkbox */}
+                    <label className="flex items-center justify-between bg-[#242424] px-2.5 py-1.5 rounded-sm cursor-pointer hover:bg-[#2a2a2a] transition-colors">
+                      <span className="text-[11px] text-[#c0c0c0]">Replace Locked Values</span>
+                      <input
+                        type="checkbox"
+                        disabled={analyzeMode !== 'special'}
+                        checked={replaceLocked}
+                        onChange={(e) => setReplaceLocked(e.target.checked)}
+                        className="w-3.5 h-3.5 accent-[#00d2ff] rounded-sm cursor-pointer"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                {/* Divider */}
+                <div className="border-t border-[#1f1f1f] border-b border-[#383838] my-3" />
+
+                {/* Parallel Processing Checkbox */}
+                <div className="flex items-center justify-end">
+                  <label className="flex items-center gap-2.5 bg-[#202020] px-3 py-1.5 rounded-sm cursor-pointer border border-[#303030]">
+                    <input
+                      type="checkbox"
+                      checked={parallelProcessing}
+                      onChange={(e) => setParallelProcessing(e.target.checked)}
+                      className="w-3.5 h-3.5 accent-[#00d2ff] rounded-sm cursor-pointer"
+                    />
+                    <span className="text-xs font-semibold text-[#d0d0d0]">Parallel Processing</span>
+                  </label>
+                </div>
+
+                {/* Warning Text */}
+                <div className="text-[#f59e0b] text-[11px] font-semibold leading-snug">
+                  Warning: Increased CPU load. Do not use in a live situation.
+                </div>
+
+                {/* Footer Buttons */}
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleStartBatchAnalysis}
+                    className="px-6 py-1.5 bg-[#1b1b1b] hover:bg-[#252525] active:bg-[#151515] text-white font-bold text-xs rounded-sm border border-[#404040] shadow-sm transition-colors cursor-pointer"
+                  >
+                    OK
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowAnalyzeModal(false)}
+                    className="px-6 py-1.5 bg-[#1b1b1b] hover:bg-[#252525] active:bg-[#151515] text-[#cccccc] hover:text-white font-medium text-xs rounded-sm border border-[#404040] shadow-sm transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* BATCH ANALYSIS PROGRESS OVERLAY */}
+        {isAnalyzingBatch && (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in duration-200">
+            <div className="w-[440px] max-w-full bg-[#181a22] border border-[#00d2ff]/40 rounded-2xl p-6 shadow-2xl text-center font-sans">
+              <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-[#00d2ff]/10 border border-[#00d2ff]/40 flex items-center justify-center">
+                <Activity className="w-6 h-6 text-[#00d2ff] animate-pulse" />
+              </div>
+              <h3 className="text-base font-bold text-white mb-1">Gründliche Audio-Analyse läuft</h3>
+              <p className="text-xs text-gray-400 mb-4">
+                Berechne ultra-präzise 16.000-Punkte Waveform, Beatgrid & Onsets
+              </p>
+
+              {/* Progress Bar */}
+              <div className="w-full bg-[#0d0e12] rounded-full h-3 border border-[#242936] overflow-hidden mb-3">
+                <div 
+                  className="h-full bg-gradient-to-r from-[#06B6D4] to-[#00d2ff] transition-all duration-300 rounded-full"
+                  style={{ width: `${Math.round((analyzeProgress.current / Math.max(1, analyzeProgress.total)) * 100)}%` }}
+                />
+              </div>
+
+              <div className="flex items-center justify-between text-xs text-gray-300 font-mono mb-2">
+                <span className="truncate max-w-[280px] text-left text-[#00f0ff]">
+                  {analyzeProgress.currentName || 'Initialisiere Audio-Engine...'}
+                </span>
+                <span className="font-bold text-white shrink-0">
+                  {analyzeProgress.current} / {analyzeProgress.total} ({Math.round((analyzeProgress.current / Math.max(1, analyzeProgress.total)) * 100)}%)
+                </span>
+              </div>
+
+              <p className="text-[11px] text-gray-400 font-mono">
+                {analyzeProgress.step}
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* MODAL BODY */}
         <div 
           onDragOver={e => e.preventDefault()}
@@ -1066,6 +1395,17 @@ export default function LibraryManagerModal({
           className="flex-1 overflow-hidden flex flex-col bg-[#0D0E12]"
         >
           {/* Status Message Banner */}
+          {analyzeSuccessMsg && (
+            <div className="px-4 py-2.5 text-xs flex items-center justify-between border-b shrink-0 bg-[#00d2ff]/10 text-[#00f0ff] border-[#00d2ff]/30 animate-in fade-in">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-[#00f0ff] shrink-0" />
+                <span className="font-semibold">{analyzeSuccessMsg}</span>
+              </div>
+              <button onClick={() => setAnalyzeSuccessMsg(null)} className="text-gray-400 hover:text-white p-1">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
           {importStatusMessage && (
             <div className={`px-4 py-2.5 text-xs flex items-center justify-between border-b shrink-0 ${
               importStatusMessage.isError 
@@ -1164,6 +1504,20 @@ export default function LibraryManagerModal({
                       <Square className="w-3.5 h-3.5 text-gray-500" />
                     )}
                     <span>Alle ({filteredTracks.length})</span>
+                  </button>
+
+                  {/* General / Selected Deep Analysis Trigger */}
+                  <button 
+                    onClick={() => setShowAnalyzeModal(true)}
+                    title={selectedPaths.size > 0 ? `${selectedPaths.size} markierte Tracks gründlich analysieren` : 'Tracks gründlich analysieren & Beatgrid setzen'}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-sm ${
+                      selectedPaths.size > 0
+                        ? 'bg-[#00d2ff]/20 text-[#00f0ff] border border-[#00d2ff]/40 hover:bg-[#00d2ff]/30 hover:shadow-[0_0_12px_rgba(0,210,255,0.25)]'
+                        : 'bg-[#0D0E12] border border-[#242936] text-cyan-400 hover:text-white hover:border-[#00d2ff]/50'
+                    }`}
+                  >
+                    <Activity className="w-3.5 h-3.5 text-[#00d2ff]" />
+                    <span>{selectedPaths.size > 0 ? `Gründlich Analysieren (${selectedPaths.size})` : 'Analysieren...'}</span>
                   </button>
 
                   {selectedPaths.size > 0 && (

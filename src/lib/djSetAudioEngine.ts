@@ -22,6 +22,7 @@ export interface TransitionState {
 
 export interface SetTimeUpdateEvent {
   setTimeSec: number;
+  currentTime?: number;
   totalDurationSec: number;
   activeTrackIndex: number;
   activeTrackId?: string;
@@ -585,6 +586,7 @@ export class DjSetAudioEngine {
 
     this.onSetTimeUpdateCallback({
       setTimeSec: this.setPlayheadSec,
+      currentTime: this.setPlayheadSec,
       totalDurationSec,
       activeTrackIndex: this.currentActiveTrackIndex,
       activeTrackId: this.currentActiveTrackId,

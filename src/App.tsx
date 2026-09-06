@@ -15,8 +15,9 @@ import DjSetPlayer from './components/DjSetPlayer';
 import SetExportModal from './components/SetExportModal';
 import { globalDjSetEngine, SetTimeUpdateEvent } from './lib/djSetAudioEngine';
 import { analyzeTrackSegments, TrackSegment } from './lib/audioAnalysis';
-import { getCamelotColor, getEnergyColor, parseCamelotOrder } from './lib/djMixerLogic';
+import { getCamelotColor, getEnergyColor, parseCamelotOrder, normalizeToCamelot } from './lib/djMixerLogic';
 import { TrackDef, MulimaGroup, HotCue, PlaylistDef, TransitionConfig } from './types';
+import { ensureMixedInKeyStructure } from './lib/mixedInKeyDetection';
 
 export type { HotCue };
 
@@ -36,6 +37,7 @@ export interface ListColumnsConfig {
   bpm: boolean;
   key: boolean;
   energy: boolean;
+  cues: boolean;
   genre: boolean;
   mood: boolean;
   duration: boolean;
@@ -50,13 +52,14 @@ export const DEFAULT_LIST_COLUMNS: ListColumnsConfig = {
   bpm: true,
   key: true,
   energy: true,
+  cues: true,
   genre: true,
   mood: true,
   duration: true,
   actions: true,
 };
 
-export type SortColumn = 'title' | 'artist' | 'album' | 'bpm' | 'key' | 'energy' | 'genre' | 'mood' | 'duration';
+export type SortColumn = 'title' | 'artist' | 'album' | 'bpm' | 'key' | 'energy' | 'cues' | 'genre' | 'mood' | 'duration';
 export type SortDirection = 'asc' | 'desc';
 
 
@@ -129,7 +132,7 @@ export default function App() {
 
   const selectAllListColumns = () => {
     const all: ListColumnsConfig = {
-      cover: true, title: true, artist: true, album: true, bpm: true, key: true, energy: true, genre: true, mood: true, duration: true, actions: true
+      cover: true, title: true, artist: true, album: true, bpm: true, key: true, energy: true, cues: true, genre: true, mood: true, duration: true, actions: true
     };
     setListColumns(all);
     try {
@@ -200,7 +203,7 @@ export default function App() {
       if (pathKey) seenPaths.add(pathKey);
       if (sigKey) seenSignatures.add(sigKey);
 
-      unique.push(t);
+      unique.push(ensureMixedInKeyStructure(t));
     }
     return unique;
   };
@@ -340,11 +343,65 @@ export default function App() {
     }
   };
 
-  const handleProgressClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!globalMulimaEngine || !duration) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const pos = (e.clientX - rect.left) / rect.width;
-    globalMulimaEngine.currentTime = pos * duration;
+  // Draggable Vorhörfunktion Scrubber Engine
+  const scrubberRef = useRef<HTMLDivElement>(null);
+  const [isScrubbing, setIsScrubbing] = useState(false);
+  const [hoverTime, setHoverTime] = useState<number | null>(null);
+  const [hoverX, setHoverX] = useState<number | null>(null);
+
+  const seekTo = (targetSec: number) => {
+    const totalDur = duration || currentTrack?.duration || 1;
+    const clamped = Math.max(0, Math.min(totalDur, targetSec));
+    setCurrentTime(clamped);
+    if (globalMulimaEngine) {
+      try {
+        globalMulimaEngine.currentTime = clamped;
+      } catch {}
+    }
+  };
+
+  const handleScrubberMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!currentTrack) return;
+    const rect = scrubberRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const clickRatio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const totalDur = duration || currentTrack.duration || 1;
+    seekTo(clickRatio * totalDur);
+    setIsScrubbing(true);
+  };
+
+  useEffect(() => {
+    if (!isScrubbing) return;
+    const onMouseMove = (e: MouseEvent) => {
+      if (!scrubberRef.current) return;
+      const rect = scrubberRef.current.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const totalDur = duration || currentTrack?.duration || 1;
+      seekTo(ratio * totalDur);
+    };
+    const onMouseUp = () => {
+      setIsScrubbing(false);
+    };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [isScrubbing, duration, currentTrack]);
+
+  const handleScrubberMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = scrubberRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const totalDur = duration || currentTrack?.duration || 1;
+    setHoverTime(ratio * totalDur);
+    setHoverX(e.clientX - rect.left);
+  };
+
+  const handleScrubberMouseLeave = () => {
+    setHoverTime(null);
+    setHoverX(null);
   };
 
   const formatTime = (time: number) => {
@@ -685,8 +742,14 @@ export default function App() {
   const avgEnergy = playlist.length ? playlist.reduce((acc, t) => acc + t.energy, 0) / playlist.length : 0;
 
   const filteredTracks = useMemo(() => {
+    const normSelectedKey = normalizeToCamelot(selectedKey);
     const filtered = tracks.filter(track => {
-      const matchesKey = !selectedKey || track.key === selectedKey;
+      let matchesKey = true;
+      if (normSelectedKey) {
+        matchesKey = normalizeToCamelot(track.key) === normSelectedKey;
+      } else if (selectedKey) {
+        matchesKey = (track.key || '').trim().toLowerCase() === selectedKey.trim().toLowerCase();
+      }
       const matchesBPM = track.bpm >= bpmRange[0] && track.bpm <= bpmRange[1];
       const matchesEnergy = track.energy >= energyRange[0] && track.energy <= energyRange[1];
       const matchesGroup = !selectedGroup || (track.groups && track.groups.includes(selectedGroup));
@@ -715,6 +778,9 @@ export default function App() {
           break;
         case 'energy':
           cmp = (a.energy || 0) - (b.energy || 0);
+          break;
+        case 'cues':
+          cmp = (a.hotCues?.length || a.cuePoints?.length || 8) - (b.hotCues?.length || b.cuePoints?.length || 8);
           break;
         case 'genre':
           cmp = (a.genre || a.style || '').localeCompare(b.genre || b.style || '', undefined, { sensitivity: 'base' });
@@ -757,7 +823,7 @@ export default function App() {
   useEffect(() => {
     const unsub = globalDjSetEngine.onSetTimeUpdate((evt) => {
       setLiveSetEvent(evt);
-      setSetPlaybackTime(evt.setTimeSec);
+      setSetPlaybackTime(evt.currentTime !== undefined ? evt.currentTime : (evt.setTimeSec !== undefined ? evt.setTimeSec : 0));
       setIsSetPlaying(prev => prev === evt.isPlaying ? prev : evt.isPlaying);
       if (evt.activeTrackIndex !== undefined) {
         setActiveSetTrackIndex(prev => prev === evt.activeTrackIndex ? prev : evt.activeTrackIndex);
@@ -971,6 +1037,23 @@ export default function App() {
             <span className="text-xs font-mono text-gray-500">
               ({filteredTracks.length} {filteredTracks.length === 1 ? 'Track' : 'Tracks'})
             </span>
+
+            {selectedKey && (
+              <button
+                id="btn-active-camelot-filter"
+                onClick={() => setSelectedKey(null)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono font-bold border shadow-sm transition-all hover:scale-105 active:scale-95"
+                style={{
+                  backgroundColor: `${getCamelotColor(selectedKey)}25`,
+                  borderColor: `${getCamelotColor(selectedKey)}80`,
+                  color: getCamelotColor(selectedKey)
+                }}
+                title="Camelot-Filter aufheben (Klicken zum Zurücksetzen)"
+              >
+                <span>Key: {selectedKey}</span>
+                <X className="w-3.5 h-3.5 opacity-70 hover:opacity-100" />
+              </button>
+            )}
           </div>
           
           <div className="flex bg-[#0D0E12] p-1 border border-[#242936] rounded-xl gap-1">
@@ -1045,6 +1128,7 @@ export default function App() {
                         { key: 'bpm' as const, label: 'BPM (Tempo)' },
                         { key: 'key' as const, label: 'Tonart (Camelot Key)' },
                         { key: 'energy' as const, label: 'Energy-Level' },
+                        { key: 'cues' as const, label: 'CUE Points (Mixed In Key 11)' },
                         { key: 'genre' as const, label: 'Genre / Stil' },
                         { key: 'mood' as const, label: 'Mood / Stimmung' },
                         { key: 'duration' as const, label: 'Laufzeit / Dauer' },
@@ -1183,6 +1267,23 @@ export default function App() {
                               <span>Energy</span>
                               {sortColumn === 'energy' ? (
                                 sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                              ) : (
+                                <ArrowUpDown className="w-3 h-3 text-gray-600 opacity-60" />
+                              )}
+                            </div>
+                          </th>
+                        )}
+
+                        {listColumns.cues && (
+                          <th 
+                            onClick={() => handleSort('cues')}
+                            className="py-3 px-3 text-center cursor-pointer hover:text-white transition-colors select-none"
+                            title="Nach Anzahl Cue Points sortieren"
+                          >
+                            <div className="flex items-center justify-center gap-1">
+                              <span>Cue Points</span>
+                              {sortColumn === 'cues' ? (
+                                sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-cyan-400" /> : <ArrowDown className="w-3.5 h-3.5 text-cyan-400" />
                               ) : (
                                 <ArrowUpDown className="w-3 h-3 text-gray-600 opacity-60" />
                               )}
@@ -1340,17 +1441,26 @@ export default function App() {
                             {/* Camelot Key (Color-Coded to Camelot Diagram) */}
                             {listColumns.key && (
                               <td className="py-2.5 px-3 text-center">
-                                <span 
-                                  className="px-2.5 py-0.5 rounded-full font-mono font-bold text-[11px] border shadow-sm"
-                                  style={{
-                                    backgroundColor: `${camelotCol}20`,
-                                    borderColor: `${camelotCol}60`,
-                                    color: camelotCol
-                                  }}
-                                  title={`Camelot Tonart: ${track.key || '—'}`}
-                                >
-                                  {track.key || '—'}
-                                </span>
+                                {(() => {
+                                  const normKey = normalizeToCamelot(track.key);
+                                  const isDifferent = Boolean(normKey && track.key && normKey.toUpperCase() !== track.key.trim().toUpperCase());
+                                  return (
+                                    <span 
+                                      className="px-2.5 py-0.5 rounded-full font-mono font-bold text-[11px] border shadow-sm inline-flex items-center gap-1 justify-center"
+                                      style={{
+                                        backgroundColor: `${camelotCol}20`,
+                                        borderColor: `${camelotCol}60`,
+                                        color: camelotCol
+                                      }}
+                                      title={isDifferent ? `Camelot: ${normKey} (Library: ${track.key})` : `Camelot Tonart: ${normKey || track.key || '—'}`}
+                                    >
+                                      <span>{normKey || track.key || '—'}</span>
+                                      {isDifferent && (
+                                        <span className="text-[9px] opacity-60 font-normal">({track.key})</span>
+                                      )}
+                                    </span>
+                                  );
+                                })()}
                               </td>
                             )}
 
@@ -1367,6 +1477,18 @@ export default function App() {
                                   title={`Energy-Level: ${track.energy}/10`}
                                 >
                                   ⚡ {track.energy}/10
+                                </span>
+                              </td>
+                            )}
+
+                            {/* Cue Points (Mixed In Key 11) */}
+                            {listColumns.cues && (
+                              <td className="py-2.5 px-3 text-center">
+                                <span 
+                                  className="px-2.5 py-0.5 rounded-full font-mono font-bold text-[11px] bg-[#0E182E] text-cyan-300 border border-cyan-500/40 shadow-sm inline-flex items-center gap-1"
+                                  title={`${track.hotCues?.length || 8} Cue Points nach Mixed In Key 11 gesetzt`}
+                                >
+                                  <span>{track.hotCues?.length || 8}</span>
                                 </span>
                               </td>
                             )}
@@ -1449,9 +1571,24 @@ export default function App() {
                       
                       <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-black/40 opacity-90 transition-opacity group-hover:opacity-100" />
       
-                      <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded text-[10px] font-bold font-mono bg-[#0D0E12]/80 text-[#A855F7] border border-[#A855F7]/30 backdrop-blur-sm shadow-sm">
-                        {track.key}
-                      </div>
+                      {(() => {
+                        const normKey = normalizeToCamelot(track.key);
+                        const cColor = getCamelotColor(track.key);
+                        const isDiff = Boolean(normKey && track.key && normKey.toUpperCase() !== track.key.trim().toUpperCase());
+                        return (
+                          <div 
+                            className="absolute top-2 left-2 px-1.5 py-0.5 rounded text-[10px] font-bold font-mono border backdrop-blur-sm shadow-sm"
+                            style={{
+                              backgroundColor: `${cColor}35`,
+                              borderColor: `${cColor}80`,
+                              color: cColor
+                            }}
+                            title={isDiff ? `Camelot: ${normKey} (Library: ${track.key})` : `Camelot: ${track.key || '—'}`}
+                          >
+                            {normKey || track.key || '—'}
+                          </div>
+                        );
+                      })()}
                       <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded text-[10px] font-bold font-mono bg-[#0D0E12]/80 text-[#22C55E] border border-[#22C55E]/30 backdrop-blur-sm shadow-sm">
                         {track.bpm}
                       </div>
@@ -1619,95 +1756,188 @@ export default function App() {
           onOpenTrackAnalysis={(t) => setActiveTrackForAnalysis(t)}
           onTrackUpdated={(updated) => updateTrack(updated.id, updated)}
           liveSetEvent={liveSetEvent}
+          currentTime={setPlaybackTime}
+          isPlaying={isSetPlaying}
+          onTogglePlay={handleSetTogglePlay}
+          onSeek={handleSetSeek}
           onOpenSetExport={() => setIsSetExportModalOpen(true)}
           onSaveSetAsPlaylist={() => handleSaveSetAsPlaylist(`Set Playlist ${new Date().toLocaleDateString('de-DE')}`)}
         />
       ) : (
         <div className="fixed bottom-0 left-0 right-0 h-20 bg-[#161920] border-t border-[#242936] px-6 flex items-center justify-between z-50 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
         
-        <div className="flex items-center gap-4 w-1/4">
+        <div className="flex items-center gap-3 w-1/4">
           {currentTrack ? (
-            <div 
-              className="flex items-center gap-4 cursor-pointer hover:opacity-80 transition-opacity" 
-              onClick={() => setActiveTrackForAnalysis(currentTrack)}
-              title="Open Analyzer"
-            >
-              {currentTrack.coverArt ? (
-                <img src={currentTrack.coverArt} className="w-12 h-12 rounded object-cover border border-[#242936]" />
-              ) : (
-                <div className="w-12 h-12 rounded bg-[#0D0E12] flex items-center justify-center border border-[#242936]">
-                  <Music className="w-5 h-5 text-gray-600"/>
+            <>
+              <div 
+                className="flex items-center gap-3 cursor-pointer hover:opacity-85 transition-opacity min-w-0" 
+                onClick={() => setActiveTrackForAnalysis(currentTrack)}
+                title="Studio / Deck-Analyse öffnen"
+              >
+                {currentTrack.coverArt ? (
+                  <img src={currentTrack.coverArt} className="w-12 h-12 rounded object-cover border border-[#242936] shrink-0" />
+                ) : (
+                  <div className="w-12 h-12 rounded bg-[#0D0E12] flex items-center justify-center border border-[#242936] shrink-0">
+                    <Music className="w-5 h-5 text-gray-600"/>
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <p className="text-sm font-bold truncate text-white leading-snug">{currentTrack.title}</p>
+                  <p className="text-[10px] text-gray-400 truncate">{currentTrack.artist}</p>
                 </div>
-              )}
-              <div className="min-w-0">
-                <p className="text-sm font-bold truncate text-white">{currentTrack.title}</p>
-                <p className="text-[10px] text-gray-400 truncate">{currentTrack.artist}</p>
               </div>
-            </div>
+
+              {/* Dedicated Studio Button to prevent click hijacking */}
+              <button 
+                id="btn-open-deck-analyzer"
+                onClick={() => setActiveTrackForAnalysis(currentTrack)}
+                className="px-2.5 py-1 rounded-lg bg-[#1E2330] hover:bg-[#A855F7] text-gray-300 hover:text-white text-xs font-mono font-bold transition-all flex items-center gap-1.5 shrink-0 border border-[#2F3646] hover:border-[#A855F7] shadow-sm hover:shadow-[0_0_10px_rgba(168,85,247,0.4)] ml-1"
+                title="Erweiterte DJ-Studioanalyse & Beatgrid öffnen"
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5 text-purple-400" />
+                <span>Studio</span>
+              </button>
+            </>
           ) : (
             <div className="text-sm text-gray-600 font-medium">Ready to play</div>
           )}
         </div>
 
-        <div className="flex flex-col items-center flex-1 max-w-xl">
+        <div className="flex flex-col items-center flex-1 max-w-2xl px-4">
           <div className="flex items-center gap-6 mb-1.5">
-            <button className="text-gray-500 hover:text-white transition-colors">
+            <button 
+              onClick={() => {
+                if (currentTrack?.hotCues && currentTrack.hotCues.length > 0) {
+                  const curSec = currentTime;
+                  const prevCue = [...currentTrack.hotCues].reverse().find(c => (c.timeMs / 1000) < curSec - 1);
+                  seekTo(prevCue ? prevCue.timeMs / 1000 : 0);
+                } else {
+                  seekTo(Math.max(0, currentTime - 10));
+                }
+              }}
+              disabled={!currentTrack}
+              className="text-gray-500 hover:text-white transition-colors disabled:opacity-30"
+              title="Vorheriger CUE Point oder 10s zurück"
+            >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" strokeWidth="2"></line></svg>
             </button>
             <button 
+              id="btn-vorhoer-toggle-play"
               onClick={togglePlay} 
               disabled={!currentTrack}
               className="w-9 h-9 rounded-full bg-[#A855F7] flex items-center justify-center text-white hover:scale-105 hover:bg-[#b56ef8] transition-all shadow-[0_0_15px_rgba(168,85,247,0.4)] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+              title={isPlaying ? 'Pause' : 'Vorhören (Play)'}
             >
               {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
             </button>
-            <button className="text-gray-500 hover:text-white transition-colors">
+            <button 
+              onClick={() => {
+                if (currentTrack?.hotCues && currentTrack.hotCues.length > 0) {
+                  const curSec = currentTime;
+                  const nextCue = currentTrack.hotCues.find(c => (c.timeMs / 1000) > curSec + 1);
+                  if (nextCue) seekTo(nextCue.timeMs / 1000);
+                } else {
+                  seekTo(Math.min(duration || 300, currentTime + 10));
+                }
+              }}
+              disabled={!currentTrack}
+              className="text-gray-500 hover:text-white transition-colors disabled:opacity-30"
+              title="Nächster CUE Point oder 10s vorwärts"
+            >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" strokeWidth="2"></line></svg>
             </button>
           </div>
+
           <div className="flex items-center gap-3 w-full">
-            <span className="text-[10px] font-mono text-gray-500 w-8 text-right">{formatTime(currentTime)}</span>
+            <span className="text-[10px] font-mono text-gray-400 w-10 text-right">{formatTime(currentTime)}</span>
+            
             <div 
-              className="flex-1 flex flex-col gap-1.5 cursor-pointer group py-1"
-              onClick={() => {
-                if (currentTrack) setActiveTrackForAnalysis(currentTrack);
-              }}
-              title="Open Analyzer"
+              ref={scrubberRef}
+              id="vorhoer-scrubber-track"
+              className="flex-1 flex flex-col gap-1.5 cursor-pointer relative py-2 select-none group"
+              onMouseDown={handleScrubberMouseDown}
+              onMouseMove={handleScrubberMouseMove}
+              onMouseLeave={handleScrubberMouseLeave}
+              title="Klicken oder Ziehen um an beliebige Position im Track zu springen"
             >
-              {/* Main Progress Bar */}
-              <div className="w-full h-1.5 bg-[#0D0E12] border border-[#242936] rounded-full relative">
-                <div className="absolute top-0 left-0 h-full bg-[#A855F7] rounded-full shadow-[0_0_8px_rgba(168,85,247,0.8)]" style={{ width: `${(currentTime / (duration || 1)) * 100}%` }} />
-                {/* Playhead thumb visible on hover */}
+              {/* Hover Timestamp Tooltip */}
+              {hoverTime !== null && hoverX !== null && (
                 <div 
-                  className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-md pointer-events-none" 
-                  style={{ left: `calc(${(currentTime / (duration || 1)) * 100}% - 6px)` }}
+                  className="absolute -top-6 -translate-x-1/2 bg-[#1E2330] text-cyan-300 border border-cyan-500/40 text-[10px] font-mono font-bold px-1.5 py-0.5 rounded shadow-lg pointer-events-none z-30"
+                  style={{ left: `${hoverX}px` }}
+                >
+                  {formatTime(hoverTime)}
+                </div>
+              )}
+
+              {/* Main Progress Bar & Draggable Playhead */}
+              <div className="w-full h-2.5 bg-[#0D0E12] border border-[#242936] rounded-full relative overflow-visible">
+                {/* Played Fill */}
+                <div 
+                  className="absolute top-0 left-0 h-full bg-gradient-to-r from-cyan-500 via-[#8B5CF6] to-[#A855F7] rounded-full shadow-[0_0_8px_rgba(168,85,247,0.8)]" 
+                  style={{ width: `${(currentTime / (duration || currentTrack?.duration || 1)) * 100}%` }} 
+                />
+
+                {/* Cue Point Ticks along progress bar */}
+                {currentTrack?.hotCues?.map((cue) => {
+                  const cuePct = ((cue.timeMs / 1000) / (duration || currentTrack?.duration || 1)) * 100;
+                  if (cuePct < 0 || cuePct > 100) return null;
+                  return (
+                    <div 
+                      key={cue.id}
+                      className="absolute top-0 bottom-0 w-[2px] z-10 pointer-events-none -translate-x-1/2 group-hover:opacity-100 opacity-60 transition-opacity"
+                      style={{ left: `${cuePct}%`, backgroundColor: cue.color || '#F59E0B' }}
+                      title={`${cue.name} (${formatTime(cue.timeMs / 1000)})`}
+                    />
+                  );
+                })}
+
+                {/* Draggable Position Playhead Thumb */}
+                <div 
+                  id="vorhoer-playhead-thumb"
+                  className={`absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 rounded-full bg-white border-2 border-[#A855F7] shadow-[0_0_12px_rgba(168,85,247,0.95)] z-20 transition-transform ${
+                    isScrubbing ? 'scale-125 cursor-grabbing ring-4 ring-[#A855F7]/30' : 'cursor-grab hover:scale-125'
+                  }`} 
+                  style={{ left: `${(currentTime / (duration || currentTrack?.duration || 1)) * 100}%` }}
                 />
               </div>
               
-              {/* Segments Waveform */}
-              {currentTrack?.segments && (
-                <div className="w-full h-2 flex rounded overflow-hidden opacity-70 group-hover:opacity-100 transition-opacity">
-                  {currentTrack.segments.map(seg => (
+              {/* Macro Segments Waveform Bar (Continuous Mixed In Key Sections) */}
+              {currentTrack?.segments && currentTrack.segments.length > 0 && (
+                <div className="w-full h-3.5 flex rounded-md overflow-hidden opacity-90 group-hover:opacity-100 transition-opacity border border-[#242936] bg-[#0A0C10]">
+                  {currentTrack.segments.map((seg, idx) => (
                     <div 
-                      key={seg.id} 
-                      className="h-full border-r border-[#0D0E12]/80 last:border-0 hover:brightness-125 transition-all"
+                      key={seg.id || idx} 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        seekTo(seg.startSec);
+                      }}
+                      className="h-full border-r border-[#0D0E12]/90 last:border-0 hover:brightness-135 transition-all relative flex items-center justify-center cursor-pointer"
                       style={{ 
                         width: `${(seg.duration / (currentTrack.duration || duration || 1)) * 100}%`, 
                         backgroundColor: seg.color 
                       }} 
-                      title={`${seg.name} (${seg.key})`} 
-                    />
+                      title={`${seg.name} (Start: ${formatTime(seg.startSec)}) - Klick zum Anspringen`}
+                    >
+                      <span className="text-[7px] font-mono font-black text-black/90 truncate px-0.5 select-none pointer-events-none">
+                        {seg.name.split('/')[0].trim()}
+                      </span>
+                    </div>
                   ))}
                 </div>
               )}
             </div>
-            <span className="text-[10px] font-mono text-gray-500 w-8">{formatTime(duration)}</span>
+
+            <span className="text-[10px] font-mono text-gray-400 w-10">{formatTime(duration || currentTrack?.duration || 0)}</span>
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-6 w-1/4">
+        <div className="flex items-center justify-end gap-5 w-1/4">
           {currentTrack && (
             <div className="flex items-center gap-2 text-[10px] font-mono">
+              <span className="px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-bold" title="Mixed In Key Cues">
+                {currentTrack.hotCues?.length || 8} CUES
+              </span>
               <span className="px-1.5 py-0.5 rounded bg-[#22C55E]/10 text-[#22C55E] border border-[#22C55E]/30">{currentTrack.key}</span>
               <span className="px-1.5 py-0.5 rounded bg-[#0D0E12] border border-[#242936] text-gray-400">{currentTrack.bpm}</span>
             </div>

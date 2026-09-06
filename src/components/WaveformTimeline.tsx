@@ -451,16 +451,21 @@ export default function WaveformTimeline({
 
             {/* Red Playhead in Ruler */}
             <div 
-              className="absolute top-0 bottom-0 w-3 -ml-1.5 flex items-center justify-center pointer-events-none transition-[left] duration-75 z-40"
+              id="timeline-master-playhead"
+              className={`absolute top-0 bottom-0 flex flex-col items-center pointer-events-none z-40 ${isPlaying ? '' : 'transition-[left] duration-75'}`}
               style={{ left: `${TIMELINE_HEADER_WIDTH + (currentTime * pxPerSec)}px` }}
             >
-              <div className="w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-t-[8px] border-t-red-500 drop-shadow-[0_0_6px_rgba(239,68,68,1)]" />
+              <div className="px-1.5 py-0.2 rounded bg-red-600 text-white font-mono font-black text-[9px] -translate-x-1/2 shadow-md border border-white/40 drop-shadow-[0_0_8px_rgba(239,68,68,0.9)] whitespace-nowrap mt-0.5">
+                {formatTime(currentTime)}
+              </div>
+              <div className="w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-t-[7px] border-t-red-500 -translate-x-1/2 drop-shadow-[0_0_6px_rgba(239,68,68,1)]" />
             </div>
           </div>
 
           {/* Vertical Playhead Needle Across All Lanes */}
           <div 
-            className="absolute top-9 bottom-0 w-[2px] bg-red-500 z-30 pointer-events-none drop-shadow-[0_0_10px_rgba(239,68,68,1)] transition-[left] duration-75"
+            id="timeline-playhead-needle"
+            className={`absolute top-9 bottom-0 w-[2px] bg-red-500 z-30 pointer-events-none drop-shadow-[0_0_10px_rgba(239,68,68,1)] ${isPlaying ? '' : 'transition-[left] duration-75'}`}
             style={{ left: `${TIMELINE_HEADER_WIDTH + (currentTime * pxPerSec)}px` }}
           />
 
