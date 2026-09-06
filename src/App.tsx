@@ -12,6 +12,7 @@ import CamelotWheel from './components/CamelotWheel';
 import DjFilters from './components/DjFilters';
 import SetPlaylistDrawer from './components/SetPlaylistDrawer';
 import DjSetPlayer from './components/DjSetPlayer';
+import { globalDjSetEngine } from './lib/djSetAudioEngine';
 import { analyzeTrackSegments, TrackSegment } from './lib/audioAnalysis';
 import { TrackDef, MulimaGroup, HotCue, PlaylistDef, TransitionConfig } from './types';
 
@@ -652,6 +653,52 @@ export default function App() {
     ? (tracks.find(t => t.id === activeTransition.targetTrackId) || null) 
     : (graphDisplayTracks[1] || null);
 
+  // Multi-track DJ Set Playback State & Synchronizer
+  const [setPlaybackTime, setSetPlaybackTime] = useState(0);
+  const [isSetPlaying, setIsSetPlaying] = useState(false);
+
+  useEffect(() => {
+    const unsub = globalDjSetEngine.onSetTimeUpdate((evt) => {
+      setSetPlaybackTime(evt.setTimeSec);
+      setIsSetPlaying(evt.isPlaying);
+    });
+    return unsub;
+  }, []);
+
+  // Pause DJ set playback if solo preview player starts
+  useEffect(() => {
+    if (isPlaying && isSetPlaying) {
+      globalDjSetEngine.pause();
+      setIsSetPlaying(false);
+    }
+  }, [isPlaying]);
+
+  const handleSetSeek = (timeSec: number) => {
+    globalDjSetEngine.seekSet(timeSec);
+  };
+
+  const handleSetTogglePlay = () => {
+    if (isSetPlaying) {
+      globalDjSetEngine.pause();
+      setIsSetPlaying(false);
+    } else {
+      if (globalMulimaEngine && !globalMulimaEngine.paused) {
+        globalMulimaEngine.pause();
+        setIsPlaying(false);
+      }
+      globalDjSetEngine.playSet(graphDisplayTracks, setTransitions, setPlaybackTime);
+      setIsSetPlaying(true);
+    }
+  };
+
+  const handleAutomix = (orderedTracks: Track[], newTransitions: TransitionConfig[]) => {
+    setPlaylist(orderedTracks);
+    setSetTransitions(newTransitions);
+    try {
+      localStorage.setItem('mulima_set_transitions', JSON.stringify(newTransitions));
+    } catch {}
+  };
+
   return (
     <div className={`flex flex-col h-screen bg-[#0D0E12] text-white font-sans overflow-hidden ${viewMode === 'graph' ? 'pb-32' : 'pb-20'} selection:bg-[#A855F7]/30`}>
       
@@ -831,6 +878,7 @@ export default function App() {
               Scatter
             </button>
             <button 
+              id="btn-view-graph"
               onClick={() => setViewMode('graph')} 
               className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${viewMode === 'graph' ? 'bg-[#242936] text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
               title="Graph Map (Strukturierte Track-Relationen)"
@@ -1161,6 +1209,11 @@ export default function App() {
                 setJumpToTime(startSec);
               }} 
               onAnalyze={(t) => setActiveTrackForAnalysis(t)}
+              currentTime={setPlaybackTime}
+              isPlaying={isSetPlaying}
+              onSeek={handleSetSeek}
+              onTogglePlay={handleSetTogglePlay}
+              onAutomix={handleAutomix}
             />
           )}
         </div>

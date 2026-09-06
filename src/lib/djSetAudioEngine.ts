@@ -20,6 +20,15 @@ export interface TransitionState {
   isBassSwapped: boolean;
 }
 
+export interface SetTimeUpdateEvent {
+  setTimeSec: number;
+  totalDurationSec: number;
+  activeTrackIndex: number;
+  activeTransitionId: string | null;
+  transitionProgress: number;
+  isPlaying: boolean;
+}
+
 export class DjSetAudioEngine {
   private ctx: AudioContext | null = null;
 
@@ -46,6 +55,19 @@ export class DjSetAudioEngine {
   private isPlaying = false;
   private currentProgress = 0; // 0..1
   private onStateChange?: (state: TransitionState) => void;
+
+  // Tracks currently loaded on the decks
+  private currentDeckATrack: TrackDef | null = null;
+  private currentDeckBTrack: TrackDef | null = null;
+
+  // Multi-Track Continuous Set State
+  private setTracks: TrackDef[] = [];
+  private setTransitions: TransitionConfig[] = [];
+  private setPlayheadSec: number = 0;
+  private setRafId: number | null = null;
+  private lastRafTimestamp: number = 0;
+  private isSetMode: boolean = false;
+  private onSetTimeUpdateCallback?: (event: SetTimeUpdateEvent) => void;
 
   constructor() {
     // Lazy AudioContext initialization on user gesture
@@ -115,34 +137,66 @@ export class DjSetAudioEngine {
     this.gainB.connect(this.masterGain);
   }
 
+  public getTrackAudioUrl(track: TrackDef): string {
+    if (track.url) return track.url;
+    if (track.filePath) return `/api/tracks/audio?path=${encodeURIComponent(track.filePath)}`;
+    return '';
+  }
+
   public setCallback(cb: (state: TransitionState) => void) {
     this.onStateChange = cb;
   }
 
-  public loadDeckA(track: TrackDef) {
+  public loadDeckA(track: TrackDef, cueTimeSec: number = 0) {
     this.init();
+    this.currentDeckATrack = track;
     if (this.audioA) {
-      if (track.url) {
-        this.audioA.src = track.url;
-      } else if (track.filePath) {
-        this.audioA.src = `/api/tracks/audio?path=${encodeURIComponent(track.filePath)}`;
+      const src = this.getTrackAudioUrl(track);
+      if (this.audioA.src !== src) {
+        this.audioA.src = src;
+        this.audioA.load();
       }
-      this.audioA.load();
+      if (cueTimeSec >= 0) {
+        this.audioA.currentTime = cueTimeSec;
+      }
     }
   }
 
-  public loadDeckB(track: TrackDef) {
+  public loadDeckB(track: TrackDef, cueTimeSec: number = 0) {
     this.init();
+    this.currentDeckBTrack = track;
     if (this.audioB) {
-      if (track.url) {
-        this.audioB.src = track.url;
-      } else if (track.filePath) {
-        this.audioB.src = `/api/tracks/audio?path=${encodeURIComponent(track.filePath)}`;
+      const src = this.getTrackAudioUrl(track);
+      if (this.audioB.src !== src) {
+        this.audioB.src = src;
+        this.audioB.load();
       }
-      this.audioB.load();
+      if (cueTimeSec >= 0) {
+        this.audioB.currentTime = cueTimeSec;
+      }
     }
   }
 
+  /**
+   * Synchronizes tempo (pitch/speed) of Deck B relative to Deck A
+   */
+  public syncDecksTempo(bpmA: number = 130, bpmB: number = 130) {
+    if (!this.audioB) return;
+    if (bpmA > 0 && bpmB > 0) {
+      const rate = Math.max(0.5, Math.min(2.0, bpmA / bpmB));
+      this.audioB.playbackRate = rate;
+    } else {
+      this.audioB.playbackRate = 1.0;
+    }
+    if (this.audioA) {
+      this.audioA.playbackRate = 1.0;
+    }
+  }
+
+  /**
+   * Starts playback. If Deck B has a source and we are within an active transition,
+   * both audio tracks start playing simultaneously in beat-sync!
+   */
   public async play() {
     this.init();
     if (this.ctx && this.ctx.state === 'suspended') {
@@ -153,32 +207,310 @@ export class DjSetAudioEngine {
       if (this.audioA && this.audioA.src) {
         this.audioA.play().catch(() => {});
       }
-      if (this.audioB && this.audioB.src && this.currentProgress > 0) {
+      // Both decks play during transition overlap!
+      if (this.audioB && this.audioB.src) {
         this.audioB.play().catch(() => {});
       }
     } catch (e) {}
+
+    // Resume set loop if in set mode
+    if (this.isSetMode) {
+      this.startSetLoop();
+    }
   }
 
   public pause() {
     this.isPlaying = false;
     if (this.audioA) this.audioA.pause();
     if (this.audioB) this.audioB.pause();
+    this.stopSetLoop();
+    if (this.onSetTimeUpdateCallback) {
+      this.notifySetTime();
+    }
   }
 
   public seekDeckA(sec: number) {
-    if (this.audioA) this.audioA.currentTime = sec;
+    if (this.audioA) this.audioA.currentTime = Math.max(0, sec);
   }
 
   public seekDeckB(sec: number) {
-    if (this.audioB) this.audioB.currentTime = sec;
+    if (this.audioB) this.audioB.currentTime = Math.max(0, sec);
   }
 
   public getAudioElements() {
     return { audioA: this.audioA, audioB: this.audioB };
   }
 
+  public getIsPlaying(): boolean {
+    return this.isPlaying;
+  }
+
+  public getSetPlayheadSec(): number {
+    return this.setPlayheadSec;
+  }
+
   /**
-   * Calculates algorithmic transition parameters based on MixingTechniken or custom MixMeister envelopes
+   * Synchronously sets transition progress and updates cue time for both decks
+   */
+  public syncTransitionProgress(
+    progress: number,
+    preset: TransitionPresetType,
+    envelopes?: TransitionEnvelopes,
+    durationBeats: number = 32,
+    sourceMixOutSec: number = 0,
+    targetMixInSec: number = 0,
+    bpmA: number = 130,
+    bpmB: number = 130
+  ) {
+    const p = Math.max(0, Math.min(1, progress));
+    this.setProgress(p, preset, envelopes, durationBeats);
+    this.syncDecksTempo(bpmA, bpmB);
+
+    const secondsPerBeat = 60 / bpmA;
+    const totalTransitionDurationSec = durationBeats * secondsPerBeat;
+    const elapsedSec = p * totalTransitionDurationSec;
+
+    // Both audio elements track the elapsed transition time
+    if (this.audioA && this.audioA.src) {
+      const targetTimeA = Math.max(0, sourceMixOutSec + elapsedSec);
+      if (Math.abs(this.audioA.currentTime - targetTimeA) > 0.3) {
+        this.audioA.currentTime = targetTimeA;
+      }
+    }
+
+    if (this.audioB && this.audioB.src) {
+      const targetTimeB = Math.max(0, targetMixInSec + (elapsedSec * (bpmA / bpmB)));
+      if (Math.abs(this.audioB.currentTime - targetTimeB) > 0.3) {
+        this.audioB.currentTime = targetTimeB;
+      }
+    }
+  }
+
+  // ================= MULTI-TRACK CONTINUOUS SET PLAYER =================
+
+  public initSet(tracks: TrackDef[], transitions: TransitionConfig[], startSetTimeSec: number = 0) {
+    this.setTracks = tracks;
+    this.setTransitions = transitions;
+    this.setPlayheadSec = startSetTimeSec;
+    this.isSetMode = true;
+    this.applySetStateAtTime(startSetTimeSec);
+  }
+
+  public seekSet(setTimeSec: number) {
+    this.setPlayheadSec = Math.max(0, setTimeSec);
+    this.applySetStateAtTime(this.setPlayheadSec);
+    this.notifySetTime();
+  }
+
+  public async playSet(tracks: TrackDef[], transitions: TransitionConfig[], startSetTimeSec?: number) {
+    this.initSet(tracks, transitions, startSetTimeSec !== undefined ? startSetTimeSec : this.setPlayheadSec);
+    await this.play();
+  }
+
+  public onSetTimeUpdate(callback: (event: SetTimeUpdateEvent) => void) {
+    this.onSetTimeUpdateCallback = callback;
+    return () => {
+      if (this.onSetTimeUpdateCallback === callback) {
+        this.onSetTimeUpdateCallback = undefined;
+      }
+    };
+  }
+
+  private startSetLoop() {
+    this.stopSetLoop();
+    this.lastRafTimestamp = performance.now();
+
+    const loop = (now: number) => {
+      if (!this.isPlaying) return;
+      const deltaSec = (now - this.lastRafTimestamp) / 1000;
+      this.lastRafTimestamp = now;
+
+      if (deltaSec > 0 && deltaSec < 1.0) {
+        this.setPlayheadSec += deltaSec;
+        this.applySetStateAtTime(this.setPlayheadSec);
+        this.notifySetTime();
+      }
+
+      this.setRafId = requestAnimationFrame(loop);
+    };
+
+    this.setRafId = requestAnimationFrame(loop);
+  }
+
+  private stopSetLoop() {
+    if (this.setRafId) {
+      cancelAnimationFrame(this.setRafId);
+      this.setRafId = null;
+    }
+  }
+
+  /**
+   * Computes which tracks and transitions are active at set time `t`
+   * and synchronizes AudioContext DSP nodes and HTMLAudioElements.
+   */
+  public applySetStateAtTime(timeSec: number) {
+    if (this.setTracks.length === 0) return;
+
+    // Build timeline layout
+    interface TrackLayout {
+      track: TrackDef;
+      startSec: number;
+      durationSec: number;
+      endSec: number;
+      transition?: TransitionConfig;
+      transitionStartSec?: number;
+      transitionEndSec?: number;
+    }
+
+    const layouts: TrackLayout[] = [];
+    let accumulatedTime = 0;
+
+    for (let i = 0; i < this.setTracks.length; i++) {
+      const track = this.setTracks[i];
+      const duration = track.duration || 180;
+      const nextTrack = this.setTracks[i + 1];
+
+      let trans: TransitionConfig | undefined;
+      let transDurationSec = 0;
+
+      if (nextTrack) {
+        trans = this.setTransitions.find(t => 
+          (t.sourceTrackId === track.id && t.targetTrackId === nextTrack.id) ||
+          (t.sourceTrackId === track.id)
+        );
+        const bpm = track.bpm || 130;
+        const beats = trans ? trans.durationBeats : 32;
+        transDurationSec = beats * (60 / bpm);
+      }
+
+      const startSec = accumulatedTime;
+      const endSec = startSec + duration;
+
+      layouts.push({
+        track,
+        startSec,
+        durationSec: duration,
+        endSec,
+        transition: trans,
+        transitionStartSec: nextTrack ? endSec - transDurationSec : undefined,
+        transitionEndSec: nextTrack ? endSec : undefined,
+      });
+
+      accumulatedTime = nextTrack ? endSec - transDurationSec : endSec;
+    }
+
+    // Find active track/transition
+    let activeTrackIdx = 0;
+    for (let i = 0; i < layouts.length; i++) {
+      if (timeSec >= layouts[i].startSec && timeSec <= layouts[i].endSec) {
+        activeTrackIdx = i;
+        break;
+      }
+    }
+
+    const currentLayout = layouts[activeTrackIdx] || layouts[0];
+    const nextLayout = layouts[activeTrackIdx + 1];
+
+    // Check if within transition
+    if (
+      currentLayout.transition && 
+      currentLayout.transitionStartSec !== undefined && 
+      currentLayout.transitionEndSec !== undefined &&
+      timeSec >= currentLayout.transitionStartSec &&
+      timeSec <= currentLayout.transitionEndSec &&
+      nextLayout
+    ) {
+      // IN TRANSITION OVERLAP ZONE: Both Deck A and Deck B active!
+      const trans = currentLayout.transition;
+      const transDurationSec = currentLayout.transitionEndSec - currentLayout.transitionStartSec;
+      const progress = Math.max(0, Math.min(1, (timeSec - currentLayout.transitionStartSec) / transDurationSec));
+
+      // Make sure Deck A is current track and Deck B is next track
+      if (this.currentDeckATrack?.id !== currentLayout.track.id) {
+        this.loadDeckA(currentLayout.track, timeSec - currentLayout.startSec);
+      }
+      if (this.currentDeckBTrack?.id !== nextLayout.track.id) {
+        this.loadDeckB(nextLayout.track, 0);
+      }
+
+      const sourceTimeSec = trans.sourceTimeSec !== undefined ? trans.sourceTimeSec : (currentLayout.durationSec - transDurationSec);
+      const targetTimeSec = trans.targetTimeSec !== undefined ? trans.targetTimeSec : 0;
+
+      this.syncTransitionProgress(
+        progress,
+        trans.preset,
+        trans.envelopes,
+        trans.durationBeats,
+        sourceTimeSec,
+        targetTimeSec,
+        currentLayout.track.bpm || 130,
+        nextLayout.track.bpm || 130
+      );
+
+      if (this.isPlaying) {
+        if (this.audioA && this.audioA.paused) this.audioA.play().catch(() => {});
+        if (this.audioB && this.audioB.paused) this.audioB.play().catch(() => {});
+      }
+    } else {
+      // SOLO TRACK ZONE: Track A plays solo
+      if (this.currentDeckATrack?.id !== currentLayout.track.id) {
+        this.loadDeckA(currentLayout.track, Math.max(0, timeSec - currentLayout.startSec));
+      } else if (this.audioA) {
+        const targetTrackTime = Math.max(0, timeSec - currentLayout.startSec);
+        if (Math.abs(this.audioA.currentTime - targetTrackTime) > 0.4) {
+          this.audioA.currentTime = targetTrackTime;
+        }
+      }
+
+      // Preload Deck B for next track if upcoming
+      if (nextLayout && this.currentDeckBTrack?.id !== nextLayout.track.id) {
+        this.loadDeckB(nextLayout.track, 0);
+      }
+
+      // Set progress to 0 (Deck A solo unity, Deck B muted)
+      this.setProgress(0, 'bass-swap', undefined, 32);
+      if (this.audioB && !this.audioB.paused) {
+        this.audioB.pause();
+      }
+
+      if (this.isPlaying && this.audioA && this.audioA.paused) {
+        this.audioA.play().catch(() => {});
+      }
+    }
+  }
+
+  private notifySetTime() {
+    if (!this.onSetTimeUpdateCallback) return;
+
+    let totalDurationSec = 300;
+    if (this.setTracks.length > 0) {
+      let acc = 0;
+      for (let i = 0; i < this.setTracks.length; i++) {
+        const dur = this.setTracks[i].duration || 180;
+        const next = this.setTracks[i + 1];
+        let transDur = 0;
+        if (next) {
+          const trans = this.setTransitions.find(t => t.sourceTrackId === this.setTracks[i].id);
+          const bpm = this.setTracks[i].bpm || 130;
+          transDur = (trans ? trans.durationBeats : 32) * (60 / bpm);
+        }
+        acc = next ? acc + dur - transDur : acc + dur;
+      }
+      totalDurationSec = acc;
+    }
+
+    this.onSetTimeUpdateCallback({
+      setTimeSec: this.setPlayheadSec,
+      totalDurationSec,
+      activeTrackIndex: 0,
+      activeTransitionId: null,
+      transitionProgress: this.currentProgress,
+      isPlaying: this.isPlaying,
+    });
+  }
+
+  /**
+   * Calculates algorithmic transition parameters based on MixingTechniken or custom Waveform envelopes
    */
   public computeTransitionState(
     progress: number, 
@@ -221,7 +553,7 @@ export class DjSetAudioEngine {
       } else if (isBassSwapped) {
         phaseLabel = 'BASS SWAP! Deck B Low-End ⚡';
       } else {
-        phaseLabel = `MixMeister EQ-Blend (${Math.round(p * 100)}%)`;
+        phaseLabel = `Waveform EQ-Blend (${Math.round(p * 100)}%)`;
       }
     } else {
       switch (preset) {
@@ -265,59 +597,69 @@ export class DjSetAudioEngine {
       }
 
       case 'bass-swap': {
-        // 2. Der Bass-Swap (Instant Low-End Switch)
+        // 2. Der Bass-Swap (Instant Low-End Switch auf der Eins)
         if (p < 0.5) {
           phaseLabel = 'Vor dem Drop: Aufbau & Mitten-Fade';
-          const pPre = p / 0.5;
           volA = 1.0;
-          volB = Math.sin(pPre * Math.PI / 2) * 0.7;
+          volB = p * 1.6; // Deck B Mitten/Höhen kommen schrittweise rein
           lowA = 1.0;
-          lowB = 0.0;
+          lowB = 0.0; // Bass komplett gemutet
           midA = 1.0;
-          midB = pPre * 0.7;
+          midB = p * 1.5;
           highA = 1.0;
-          highB = pPre * 0.7;
+          highB = p * 1.5;
         } else {
           phaseLabel = 'BASS SWAP! Schlagartiger Low-End Switch ⚡';
           isBassSwapped = true;
-          const pPost = (p - 0.5) / 0.5;
-          volA = Math.max(0, 1.0 - pPost * 1.5);
-          volB = 1.0;
+          // Schlagartiger Tausch: Deck A Bass 0, Deck B Bass voll
           lowA = 0.0;
           lowB = 1.0;
-          midA = Math.max(0, 0.7 * (1 - pPost));
+          volA = Math.max(0, 1.0 - (p - 0.5) * 2);
+          volB = 1.0;
+          midA = Math.max(0, 1.0 - (p - 0.5) * 2);
           midB = 1.0;
-          highA = Math.max(0, 0.7 * (1 - pPost));
+          highA = Math.max(0, 1.0 - (p - 0.5) * 2);
           highB = 1.0;
         }
         break;
       }
 
       case 'filter-sweep': {
-        // 3. Der Filter-Sweep (HPF / LPF Transition)
-        phaseLabel = `HPF Filter-Sweep (${Math.round(20 * Math.pow(100, p))} Hz) 🌊`;
-        hpfCutoffA = 20 * Math.pow(100, p);
-        hpfQA = 1.0 + p * 2.5;
-        
-        lpfCutoffB = 300 * Math.pow(66.6, p);
-        lpfQB = 1.0;
-
-        volA = Math.cos(p * Math.PI / 2);
-        volB = Math.sin(p * Math.PI / 2);
-        lowA = Math.max(0, 1.0 - p * 1.2);
-        lowB = Math.min(1.0, p * 1.2);
-        midA = 1.0;
-        midB = 1.0;
-        highA = 1.0;
-        highB = 1.0;
-        if (p > 0.6) isBassSwapped = true;
+        // 3. Der HPF Filter-Sweep
+        if (p < 0.7) {
+          const pSweep = p / 0.7;
+          phaseLabel = `HPF Sweep auf Deck A (${Math.round(hpfCutoffA)} Hz)`;
+          // 20 Hz bis 2500 Hz Sweep
+          hpfCutoffA = 20 * Math.pow(2500 / 20, pSweep);
+          hpfQA = 1.0 + 3.0 * Math.sin(pSweep * Math.PI); // Resonanz-Peak am Break
+          volA = 1.0;
+          volB = Math.sin(pSweep * Math.PI / 2);
+          lowA = Math.max(0, 1.0 - pSweep * 1.5);
+          lowB = 0.0;
+          midA = 1.0;
+          midB = 0.8 * pSweep;
+          highA = 1.0;
+          highB = 0.8 * pSweep;
+        } else {
+          phaseLabel = 'DROP! Filter Cut & Bass Impact 💥';
+          isBassSwapped = true;
+          hpfCutoffA = 20;
+          volA = 0.0;
+          volB = 1.0;
+          lowA = 0.0;
+          lowB = 1.0;
+          midA = 0.0;
+          midB = 1.0;
+          highA = 0.0;
+          highB = 1.0;
+        }
         break;
       }
 
       case 'cut-drop': {
-        // 4. Der Cut / Drop (Fader Slam)
-        if (p < 0.5) {
-          phaseLabel = 'Break / Stille vor dem Drop...';
+        // 4. Der Cut / Drop (Harter Schnitt auf die Eins)
+        if (p < 0.98) {
+          phaseLabel = 'Spannungsaufbau vor Fader-Slam...';
           volA = 1.0;
           volB = 0.0;
           lowA = 1.0;
@@ -327,7 +669,7 @@ export class DjSetAudioEngine {
           highA = 1.0;
           highB = 0.0;
         } else {
-          phaseLabel = '💥 FADER SLAM / DROP! Track B übernimmt';
+          phaseLabel = 'FADER SLAM! Drop auf Deck B 💥';
           isBassSwapped = true;
           volA = 0.0;
           volB = 1.0;
@@ -364,7 +706,7 @@ export class DjSetAudioEngine {
       phaseLabel,
       isBassSwapped,
       deckA: {
-        track: null,
+        track: this.currentDeckATrack,
         volume: volA,
         eqLow: lowA,
         eqMid: midA,
@@ -374,7 +716,7 @@ export class DjSetAudioEngine {
         filterQ: hpfQA,
       },
       deckB: {
-        track: null,
+        track: this.currentDeckBTrack,
         volume: volB,
         eqLow: lowB,
         eqMid: midB,

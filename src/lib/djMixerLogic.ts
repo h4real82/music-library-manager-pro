@@ -1,4 +1,4 @@
-import { EnvelopePoint, TransitionEnvelopes, TransitionPresetType } from '../types';
+import { EnvelopePoint, TransitionEnvelopes, TransitionPresetType, TrackDef, TransitionConfig } from '../types';
 
 export interface KeyCompatibilityResult {
   score: number; // 0 to 100
@@ -104,7 +104,7 @@ export function calculateTempoSync(bpmA: number, bpmB: number) {
 }
 
 /**
- * MixMeister Envelope Point Evaluator
+ * Waveform Envelope Point Evaluator
  * Evaluates the value (0.0 to 1.0) at any given beat along the envelope timeline
  */
 export function evaluateEnvelope(points: EnvelopePoint[], currentBeat: number): number {
@@ -133,7 +133,7 @@ export function evaluateEnvelope(points: EnvelopePoint[], currentBeat: number): 
 }
 
 /**
- * Generates default 3-Band MixMeister Envelope Curves based on the selected Preset
+ * Generates default 3-Band Waveform Envelope Curves based on the selected Preset
  */
 export function generateDefaultEnvelopes(preset: TransitionPresetType, durationBeats: number): TransitionEnvelopes {
   const b = durationBeats;
@@ -400,3 +400,97 @@ export function generateDefaultEnvelopes(preset: TransitionPresetType, durationB
     }
   }
 }
+
+/**
+ * DJ.Studio-inspired "Harmonize" Automix Generator
+ * Optimizes playlist sequence based on Camelot Wheel harmonic compatibility & BPM,
+ * and automatically sets up 32-beat phrase-aligned transitions with 3-band curves.
+ */
+export function generateHarmonizedSet(rawTracks: TrackDef[]): {
+  orderedTracks: TrackDef[];
+  transitions: TransitionConfig[];
+} {
+  if (rawTracks.length === 0) return { orderedTracks: [], transitions: [] };
+  if (rawTracks.length === 1) return { orderedTracks: [rawTracks[0]], transitions: [] };
+
+  // Greedy TSP / nearest-neighbor harmonic path search
+  const remaining = [...rawTracks];
+  const ordered: TrackDef[] = [remaining.shift()!];
+
+  while (remaining.length > 0) {
+    const current = ordered[ordered.length - 1];
+    let bestIdx = 0;
+    let bestScore = -1000;
+
+    for (let i = 0; i < remaining.length; i++) {
+      const candidate = remaining[i];
+      const keyComp = evaluateKeyCompatibility(current.key, candidate.key);
+      const tempo = calculateTempoSync(current.bpm || 130, candidate.bpm || 130);
+      
+      // Score: Key harmony (0-100) minus BPM penalty (e.g. 2.5 pts per BPM diff)
+      const score = keyComp.score - (tempo.diffBpm * 2.5);
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+    }
+
+    ordered.push(remaining.splice(bestIdx, 1)[0]);
+  }
+
+  // Generate transitions between consecutive tracks
+  const transitions: TransitionConfig[] = [];
+
+  for (let i = 0; i < ordered.length - 1; i++) {
+    const src = ordered[i];
+    const tgt = ordered[i + 1];
+
+    const keyComp = evaluateKeyCompatibility(src.key, tgt.key);
+    const tempo = calculateTempoSync(src.bpm || 130, tgt.bpm || 130);
+
+    let preset: TransitionPresetType = 'bass-swap';
+    if (keyComp.type === 'perfect' || keyComp.type === 'relative') {
+      preset = 'eq-blend';
+    } else if (keyComp.type === 'clash') {
+      preset = 'filter-sweep';
+    }
+
+    const durationBeats = 32;
+    const bpm = src.bpm || 130;
+    const durationSec = durationBeats * (60 / bpm);
+    const trackDuration = src.duration || 180;
+    const sourceTimeSec = Math.max(0, trackDuration - durationSec);
+    const targetTimeSec = 0;
+
+    transitions.push({
+      id: `tr-auto-${src.id}-${tgt.id}`,
+      sourceTrackId: src.id,
+      sourceSlotId: `slot-3-${src.id}`,
+      sourceSlotName: 'Outro Transition',
+      sourceSlotNumber: 3,
+      sourceTimeSec,
+      targetTrackId: tgt.id,
+      targetSlotId: `slot-1-${tgt.id}`,
+      targetSlotName: 'Intro Cue',
+      targetSlotNumber: 1,
+      targetTimeSec,
+      durationBeats,
+      durationSec,
+      preset,
+      envelopes: generateDefaultEnvelopes(preset, durationBeats),
+      tempoSync: true,
+      bpmA: src.bpm,
+      bpmB: tgt.bpm,
+      targetBpm: src.bpm,
+      pitchShiftPercent: tempo.pitchShift,
+      keyCompatibility: {
+        score: keyComp.score,
+        label: keyComp.label,
+        type: keyComp.type,
+      },
+    });
+  }
+
+  return { orderedTracks: ordered, transitions };
+}
+

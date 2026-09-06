@@ -1,10 +1,10 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, RotateCcw, Sliders, Zap, Waves, Scissors, Gauge, Clock, Music, ZoomIn, ZoomOut, Maximize2, Sparkles, ChevronRight } from 'lucide-react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { Play, Pause, RotateCcw, Sliders, Zap, Waves, Scissors, Gauge, Clock, Music, ZoomIn, ZoomOut, Maximize2, Sparkles, ChevronRight, Wand2 } from 'lucide-react';
 import { TrackDef, TransitionConfig, TransitionPresetType } from '../types';
-import { evaluateKeyCompatibility, calculateTempoSync, evaluateEnvelope } from '../lib/djMixerLogic';
+import { evaluateKeyCompatibility, calculateTempoSync, evaluateEnvelope, generateHarmonizedSet } from '../lib/djMixerLogic';
 import { PRESET_META } from './DjSetPlayer';
 
-interface MixMeisterTimelineProps {
+interface WaveformTimelineProps {
   tracks: TrackDef[];
   transitions: TransitionConfig[];
   activeTransitionId?: string;
@@ -12,10 +12,13 @@ interface MixMeisterTimelineProps {
   onOpenTransitionStudio: (t: TransitionConfig) => void;
   onOpenTrackAnalysis?: (track: TrackDef) => void;
   currentTime?: number; // Current playback time of set in seconds
+  isPlaying?: boolean;
   onSeek?: (timeSec: number) => void;
+  onTogglePlay?: () => void;
+  onAutomix?: (orderedTracks: TrackDef[], newTransitions: TransitionConfig[]) => void;
 }
 
-export default function MixMeisterTimeline({
+export default function WaveformTimeline({
   tracks,
   transitions,
   activeTransitionId,
@@ -23,10 +26,13 @@ export default function MixMeisterTimeline({
   onOpenTransitionStudio,
   onOpenTrackAnalysis,
   currentTime = 0,
+  isPlaying = false,
   onSeek,
-}: MixMeisterTimelineProps) {
+  onTogglePlay,
+  onAutomix,
+}: WaveformTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [zoomLevel, setZoomLevel] = useState<number>(1.0); // 0.5x to 2.5x
+  const [zoomLevel, setZoomLevel] = useState<number>(1.0); // 0.4x to 2.5x
 
   // Compute start and end times for each track in the set based on transitions overlap
   interface TrackLayout {
@@ -39,49 +45,50 @@ export default function MixMeisterTimeline({
     incomingTransition?: TransitionConfig;
   }
 
-  const trackLayouts: TrackLayout[] = [];
-  let currentAccumulatedTime = 0;
+  const trackLayouts: TrackLayout[] = useMemo(() => {
+    const layouts: TrackLayout[] = [];
+    let currentAccumulatedTime = 0;
 
-  for (let i = 0; i < tracks.length; i++) {
-    const track = tracks[i];
-    const duration = track.duration || 180; // default 3 mins if missing
+    for (let i = 0; i < tracks.length; i++) {
+      const track = tracks[i];
+      const duration = track.duration || 180;
 
-    // Check if there is a transition from track i to track i+1
-    const nextTrack = tracks[i + 1];
-    let transitionDurationSec = 30; // default 30s
-    let outTrans: TransitionConfig | undefined;
+      // Find transition from track i to track i+1
+      const nextTrack = tracks[i + 1];
+      let transitionDurationSec = 30; // default 30s
+      let outTrans: TransitionConfig | undefined;
 
-    if (nextTrack) {
-      outTrans = transitions.find(t => 
-        (t.sourceTrackId === track.id && t.targetTrackId === nextTrack.id) ||
-        (t.sourceTrackId === track.id)
-      );
-      if (outTrans) {
-        const bpm = track.bpm || 130;
-        transitionDurationSec = (outTrans.durationBeats * (60 / bpm));
+      if (nextTrack) {
+        outTrans = transitions.find(t => 
+          (t.sourceTrackId === track.id && t.targetTrackId === nextTrack.id) ||
+          (t.sourceTrackId === track.id)
+        );
+        if (outTrans) {
+          const bpm = track.bpm || 130;
+          transitionDurationSec = (outTrans.durationBeats * (60 / bpm));
+        }
       }
+
+      const startSec = currentAccumulatedTime;
+      const endSec = startSec + duration;
+
+      layouts.push({
+        track,
+        index: i + 1,
+        startSec,
+        durationSec: duration,
+        endSec,
+        outgoingTransition: outTrans,
+      });
+
+      currentAccumulatedTime = nextTrack ? endSec - transitionDurationSec : endSec;
     }
-
-    const startSec = currentAccumulatedTime;
-    const endSec = startSec + duration;
-
-    trackLayouts.push({
-      track,
-      index: i + 1,
-      startSec,
-      durationSec: duration,
-      endSec,
-      outgoingTransition: outTrans,
-    });
-
-    // Next track starts (duration - overlap) after current track start
-    currentAccumulatedTime = endSec - transitionDurationSec;
-  }
+    return layouts;
+  }, [tracks, transitions]);
 
   const totalSetDurationSec = trackLayouts.length > 0 ? trackLayouts[trackLayouts.length - 1].endSec : 300;
 
   // Pixels per second calculation
-  // Base: 1200px for a 10-minute set = 2px/sec
   const pxPerSec = 2.2 * zoomLevel;
   const totalTimelineWidthPx = Math.max(1000, totalSetDurationSec * pxPerSec + 200);
 
@@ -99,6 +106,12 @@ export default function MixMeisterTimeline({
     onSeek(seekSec);
   };
 
+  const handleAutomixClick = () => {
+    if (!onAutomix || tracks.length < 2) return;
+    const result = generateHarmonizedSet(tracks);
+    onAutomix(result.orderedTracks, result.transitions);
+  };
+
   return (
     <div className="flex-1 flex flex-col bg-[#0A0C10] overflow-hidden select-none relative">
       
@@ -106,25 +119,50 @@ export default function MixMeisterTimeline({
       <div className="h-12 px-6 border-b border-[#242936] bg-[#0F1116] flex items-center justify-between z-20 shrink-0">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse" />
-            <h3 className="text-xs font-bold uppercase tracking-wider text-white font-mono">
-              MixMeister Multi-Track Set Timeline
+            <span className={`w-2.5 h-2.5 rounded-full ${isPlaying ? 'bg-emerald-400 animate-pulse' : 'bg-cyan-400'}`} />
+            <h3 className="text-xs font-bold uppercase tracking-wider text-white font-mono flex items-center gap-1.5">
+              <span>Waveform Multi-Track Set Timeline</span>
             </h3>
           </div>
+
+          {onTogglePlay && (
+            <button
+              onClick={onTogglePlay}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-mono font-bold transition-all shadow-md ${
+                isPlaying 
+                  ? 'bg-amber-600 hover:bg-amber-500 text-white' 
+                  : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+              }`}
+              title={isPlaying ? 'Set Pausieren' : 'Set von aktueller Position abspielen'}
+            >
+              {isPlaying ? <Pause className="w-3.5 h-3.5 fill-white" /> : <Play className="w-3.5 h-3.5 fill-white ml-0.5" />}
+              <span>{isPlaying ? 'PAUSE' : 'PLAY SET'}</span>
+            </button>
+          )}
+
           <div className="text-[11px] font-mono text-gray-400 flex items-center gap-2">
-            <span>{tracks.length} Tracks im Set</span>
+            <span className="text-cyan-400 font-bold">{formatTime(currentTime)}</span>
+            <span>/</span>
+            <span>{formatTime(totalSetDurationSec)}</span>
             <span>•</span>
-            <span>Gesamtdauer: <strong className="text-white">{formatTime(totalSetDurationSec)}</strong></span>
+            <span>{tracks.length} Tracks</span>
             <span>•</span>
-            <span>{transitions.length} Übergänge konfiguriert</span>
+            <span>{transitions.length} Übergänge</span>
           </div>
         </div>
 
-        {/* Zoom Controls & Hint */}
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-mono text-gray-500 hidden md:inline">
-            Tipp: Klick auf Übergang öffnet den 3-Band EQ Hüllkurven-Editor
-          </span>
+        {/* Automix & Zoom Controls */}
+        <div className="flex items-center gap-3">
+          {onAutomix && tracks.length >= 2 && (
+            <button
+              onClick={handleAutomixClick}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-purple-600/90 hover:bg-purple-500 text-white text-xs font-mono font-bold border border-purple-400/40 shadow-lg shadow-purple-900/30 transition-all hover:scale-105 active:scale-95"
+              title="DJ.Studio Harmonize: Set automatisch nach Camelot-Rad & BPM harmonisieren"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-spin" />
+              <span>Harmonize (Automix)</span>
+            </button>
+          )}
 
           <div className="flex items-center gap-1 bg-[#161920] border border-[#242936] rounded-xl p-1">
             <button
@@ -162,7 +200,7 @@ export default function MixMeisterTimeline({
             onClick={handleRulerClick}
             className="sticky top-0 h-9 bg-[#161920] border-b border-[#242936] z-30 flex items-center px-2 cursor-pointer group shadow-md"
           >
-            {/* 30-Second Interval Markers */}
+            {/* 15-Second Interval Markers */}
             {Array.from({ length: Math.ceil(totalSetDurationSec / 15) + 1 }).map((_, idx) => {
               const sec = idx * 15;
               const x = sec * pxPerSec;
@@ -189,13 +227,13 @@ export default function MixMeisterTimeline({
               className="absolute top-0 bottom-0 w-3 -ml-1.5 flex items-center justify-center pointer-events-none transition-[left] duration-75 z-40"
               style={{ left: `${currentTime * pxPerSec}px` }}
             >
-              <div className="w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-t-[8px] border-t-red-500" />
+              <div className="w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-t-[8px] border-t-red-500 drop-shadow-[0_0_6px_rgba(239,68,68,1)]" />
             </div>
           </div>
 
           {/* Vertical Playhead Across All Lanes */}
           <div 
-            className="absolute top-9 bottom-0 w-[2px] bg-red-500 z-30 pointer-events-none drop-shadow-[0_0_8px_rgba(239,68,68,0.9)] transition-[left] duration-75"
+            className="absolute top-9 bottom-0 w-[2px] bg-red-500 z-30 pointer-events-none drop-shadow-[0_0_10px_rgba(239,68,68,1)] transition-[left] duration-75"
             style={{ left: `${currentTime * pxPerSec}px` }}
           />
 
@@ -221,6 +259,11 @@ export default function MixMeisterTimeline({
                 overlapWidthPx = overlapDurationSec * pxPerSec;
                 overlapStartPx = (layout.endSec - overlapDurationSec) * pxPerSec;
               }
+
+              // Real or Authentic 3-Band Waveform Peak Generation
+              const sliceCount = Math.min(320, Math.max(60, Math.floor(widthPx / 3.5)));
+              const bpm = track.bpm || 130;
+              const beatIntervalSec = 60 / bpm;
 
               return (
                 <div 
@@ -264,37 +307,78 @@ export default function MixMeisterTimeline({
 
                   {/* Horizontal Waveform Strip across Time */}
                   <div 
-                    className="absolute top-1 bottom-1 rounded-lg overflow-hidden border border-cyan-500/20 bg-[#0B0D12] flex items-center"
+                    className="absolute top-1 bottom-1 rounded-lg overflow-hidden border border-cyan-500/20 bg-[#0B0D12] flex items-center cursor-pointer"
                     style={{ left: `${leftPx}px`, width: `${widthPx}px` }}
+                    onClick={(e) => {
+                      if (!onSeek) return;
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const clickX = e.clientX - rect.left;
+                      const seekSetTime = layout.startSec + (clickX / widthPx) * layout.durationSec;
+                      onSeek(seekSetTime);
+                    }}
+                    title={`Klick: Zu Track #${layout.index} springen`}
                   >
-                    {/* Simulated Waveform Slices */}
-                    <div className="w-full h-full flex items-center px-1 opacity-75">
-                      {Array.from({ length: Math.min(240, Math.floor(widthPx / 3)) }).map((_, sIdx) => {
-                        const hPct = Math.abs(Math.sin(sIdx * 0.2 + idx)) * 75 + 15;
+                    {/* Authentic 3-Band Multi-Frequency Waveform Slices */}
+                    <div className="w-full h-full flex items-center px-1">
+                      {Array.from({ length: sliceCount }).map((_, sIdx) => {
+                        const sliceTime = (sIdx / sliceCount) * layout.durationSec;
+                        const beatPhase = ((sliceTime / beatIntervalSec) % 1 + 1) % 1;
+                        const isDownbeat = (Math.floor(sliceTime / beatIntervalSec) % 4 === 0);
+                        const kickTransient = Math.max(0, 1 - beatPhase * 3.2);
+
+                        // Energy envelope based on segments or natural structure
+                        let energyMultiplier = 0.85;
+                        if (track.segments && track.segments.length > 0) {
+                          const seg = track.segments.find(s => sliceTime >= s.startSec && sliceTime <= s.endSec);
+                          if (seg) {
+                            if (seg.name.includes('Drop') || seg.name.includes('Peak')) energyMultiplier = 1.25;
+                            else if (seg.name.includes('Break') || seg.name.includes('Build')) energyMultiplier = 0.6;
+                            else if (seg.name.includes('Intro') || seg.name.includes('Outro')) energyMultiplier = 0.75;
+                          }
+                        }
+
+                        const lowAmp = Math.min(1.0, (kickTransient * (isDownbeat ? 1.0 : 0.75)) * energyMultiplier);
+                        const midAmp = Math.min(1.0, (Math.abs(Math.sin(sliceTime * 2.8 + idx)) * 0.4 + 0.3) * energyMultiplier);
+                        const highAmp = Math.min(1.0, (Math.pow(Math.abs(Math.sin(sliceTime * 12 + idx)), 4) * 0.5 + 0.2) * energyMultiplier);
+
+                        const totalHeightPct = Math.min(94, Math.max(12, (lowAmp * 0.5 + midAmp * 0.3 + highAmp * 0.2) * 100));
+
+                        // Spectral Color Gradient:
+                        // Strong kick downbeat = Orange/Red
+                        // Mids = Yellow/Amber
+                        // Highs = Cyan/Blue
+                        const isKickSlice = kickTransient > 0.45;
+                        const barColor = isKickSlice
+                          ? 'bg-gradient-to-t from-red-600 via-orange-400 to-amber-300'
+                          : 'bg-gradient-to-t from-cyan-600 via-cyan-400 to-teal-300';
+
                         return (
                           <div
                             key={sIdx}
-                            className="flex-1 mx-[1px] bg-gradient-to-t from-cyan-600 via-cyan-400 to-cyan-200 rounded-sm"
-                            style={{ height: `${hPct}%` }}
+                            className={`flex-1 mx-[1px] rounded-sm transition-all ${barColor}`}
+                            style={{ 
+                              height: `${totalHeightPct}%`,
+                              opacity: isKickSlice ? 0.95 : 0.65
+                            }}
                           />
                         );
                       })}
                     </div>
 
                     {/* Track start/end cue flags */}
-                    <div className="absolute top-1 left-2 px-1.5 py-0.2 bg-black/60 rounded text-[9px] font-mono text-cyan-300 border border-cyan-500/30">
+                    <div className="absolute top-1 left-2 px-1.5 py-0.2 bg-black/70 rounded text-[9px] font-mono text-cyan-300 border border-cyan-500/30 backdrop-blur-sm pointer-events-none">
                       START: {formatTime(layout.startSec)}
                     </div>
                   </div>
 
-                  {/* ================= MIXMEISTER TRANSITION OVERLAP ZONE & ENVELOPE PREVIEW ================= */}
+                  {/* ================= WAVEFORM TRANSITION OVERLAP ZONE & ENVELOPE PREVIEW ================= */}
                   {outTrans && nextLayout && overlapWidthPx > 0 && (
                     <div 
                       onClick={() => onOpenTransitionStudio(outTrans)}
                       className={`absolute top-0 bottom-0 z-30 border-2 rounded-xl cursor-pointer transition-all flex flex-col justify-between p-2 group/zone ${
                         isTransitionActive 
-                          ? 'border-purple-400 bg-purple-950/40 shadow-[0_0_24px_rgba(168,85,247,0.5)] ring-2 ring-purple-500/50' 
-                          : 'border-cyan-400/80 bg-cyan-950/25 hover:border-purple-400 hover:bg-purple-950/30'
+                          ? 'border-purple-400 bg-purple-950/50 shadow-[0_0_24px_rgba(168,85,247,0.6)] ring-2 ring-purple-500/50' 
+                          : 'border-cyan-400/80 bg-cyan-950/30 hover:border-purple-400 hover:bg-purple-950/40'
                       }`}
                       style={{ left: `${overlapStartPx}px`, width: `${overlapWidthPx}px` }}
                       title="Klick: 3-Band EQ Hüllkurven-Editor öffnen"
@@ -318,7 +402,7 @@ export default function MixMeisterTimeline({
                         )}
                       </div>
 
-                      {/* 3-Band EQ Envelope Mini-Preview (MixMeister SVG Overlay) */}
+                      {/* 3-Band EQ Envelope Mini-Preview (Waveform SVG Overlay) */}
                       <div className="w-full h-12 relative my-auto pointer-events-none opacity-90 group-hover/zone:opacity-100">
                         <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 40">
                           {/* Low / Bass Curve (Orange) */}

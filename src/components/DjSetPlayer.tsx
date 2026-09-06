@@ -63,18 +63,25 @@ export default function DjSetPlayer({
   const activePreset: TransitionPresetType = activeTransition?.preset || 'bass-swap';
   const durationBeats = activeTransition?.durationBeats || 32;
 
+  const sourceMixOutSec = activeTransition?.sourceTimeSec !== undefined
+    ? activeTransition.sourceTimeSec 
+    : Math.max(0, (deckATrack?.duration || 180) - (durationBeats * (60 / (deckATrack?.bpm || 130))));
+  const targetMixInSec = activeTransition?.targetTimeSec !== undefined
+    ? activeTransition.targetTimeSec
+    : 0;
+
   // Sync tracks with engine
   useEffect(() => {
     if (deckATrack) {
-      globalDjSetEngine.loadDeckA(deckATrack);
+      globalDjSetEngine.loadDeckA(deckATrack, sourceMixOutSec);
     }
-  }, [deckATrack]);
+  }, [deckATrack, sourceMixOutSec]);
 
   useEffect(() => {
     if (deckBTrack) {
-      globalDjSetEngine.loadDeckB(deckBTrack);
+      globalDjSetEngine.loadDeckB(deckBTrack, targetMixInSec);
     }
-  }, [deckBTrack]);
+  }, [deckBTrack, targetMixInSec]);
 
   // Key and Tempo evaluation
   const keyComp = evaluateKeyCompatibility(deckATrack?.key, deckBTrack?.key);
@@ -89,7 +96,20 @@ export default function DjSetPlayer({
       durationBeats
     );
     setTransitionState(state);
-  }, [crossfaderProgress, activePreset, activeTransition?.envelopes, durationBeats]);
+
+    if (isPlaying) {
+      globalDjSetEngine.syncTransitionProgress(
+        crossfaderProgress,
+        activePreset,
+        activeTransition?.envelopes,
+        durationBeats,
+        sourceMixOutSec,
+        targetMixInSec,
+        deckATrack?.bpm || 130,
+        deckBTrack?.bpm || 130
+      );
+    }
+  }, [crossfaderProgress, activePreset, activeTransition?.envelopes, durationBeats, sourceMixOutSec, targetMixInSec, isPlaying]);
 
   // Toggle play/pause
   const togglePlay = () => {
@@ -100,6 +120,18 @@ export default function DjSetPlayer({
         cancelAutoTransition();
       }
     } else {
+      if (deckATrack) globalDjSetEngine.loadDeckA(deckATrack, sourceMixOutSec);
+      if (deckBTrack) globalDjSetEngine.loadDeckB(deckBTrack, targetMixInSec);
+      globalDjSetEngine.syncTransitionProgress(
+        crossfaderProgress,
+        activePreset,
+        activeTransition?.envelopes,
+        durationBeats,
+        sourceMixOutSec,
+        targetMixInSec,
+        deckATrack?.bpm || 130,
+        deckBTrack?.bpm || 130
+      );
       globalDjSetEngine.play();
       setIsPlaying(true);
     }
@@ -113,14 +145,13 @@ export default function DjSetPlayer({
     setIsAutoTransitioning(false);
   };
 
-  // Trigger automated transition audition (plays through 0.0 -> 1.0 at track tempo)
+  // Trigger automated transition audition (plays both tracks simultaneously through 0.0 -> 1.0 in beat-sync)
   const triggerAutoTransition = () => {
     cancelAutoTransition();
     setIsAutoTransitioning(true);
-    if (!isPlaying) {
-      globalDjSetEngine.play();
-      setIsPlaying(true);
-    }
+
+    if (deckATrack) globalDjSetEngine.loadDeckA(deckATrack, sourceMixOutSec);
+    if (deckBTrack) globalDjSetEngine.loadDeckB(deckBTrack, targetMixInSec);
 
     const bpm = deckATrack?.bpm || 130;
     const secondsPerBeat = 60 / bpm;
@@ -129,6 +160,22 @@ export default function DjSetPlayer({
     // Start from beginning of transition if already at end
     const startProgress = crossfaderProgress >= 0.98 ? 0 : crossfaderProgress;
     setCrossfaderProgress(startProgress);
+
+    globalDjSetEngine.syncTransitionProgress(
+      startProgress,
+      activePreset,
+      activeTransition?.envelopes,
+      durationBeats,
+      sourceMixOutSec,
+      targetMixInSec,
+      deckATrack?.bpm || 130,
+      deckBTrack?.bpm || 130
+    );
+
+    if (!isPlaying) {
+      globalDjSetEngine.play();
+      setIsPlaying(true);
+    }
 
     const startTime = performance.now();
     const remainingRange = 1.0 - startProgress;
@@ -139,6 +186,16 @@ export default function DjSetPlayer({
       const currentVal = startProgress + fraction * remainingRange;
 
       setCrossfaderProgress(currentVal);
+      globalDjSetEngine.syncTransitionProgress(
+        currentVal,
+        activePreset,
+        activeTransition?.envelopes,
+        durationBeats,
+        sourceMixOutSec,
+        targetMixInSec,
+        deckATrack?.bpm || 130,
+        deckBTrack?.bpm || 130
+      );
 
       if (fraction < 1.0) {
         autoTransitionRef.current = requestAnimationFrame(step);

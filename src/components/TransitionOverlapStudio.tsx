@@ -3,6 +3,7 @@ import { Play, Pause, RotateCcw, X, Check, Trash2, Plus, Sliders, Zap, Waves, Sc
 import { TrackDef, TransitionConfig, TransitionEnvelopes, EnvelopePoint, TransitionPresetType } from '../types';
 import { evaluateKeyCompatibility, calculateTempoSync, generateDefaultEnvelopes, evaluateEnvelope } from '../lib/djMixerLogic';
 import { PRESET_META } from './DjSetPlayer';
+import { globalDjSetEngine } from '../lib/djSetAudioEngine';
 
 interface TransitionOverlapStudioProps {
   transition: TransitionConfig;
@@ -203,6 +204,7 @@ export default function TransitionOverlapStudio({
   const toggleAudition = () => {
     if (isPlaying) {
       setIsPlaying(false);
+      globalDjSetEngine.pause();
       if (auditionRafRef.current) {
         cancelAnimationFrame(auditionRafRef.current);
         auditionRafRef.current = null;
@@ -216,6 +218,22 @@ export default function TransitionOverlapStudio({
       const startBeat = auditionBeat >= beats - 0.5 ? 0 : auditionBeat;
       setAuditionBeat(startBeat);
 
+      if (sourceTrack && targetTrack) {
+        globalDjSetEngine.loadDeckA(sourceTrack, transition.sourceTimeSec || 0);
+        globalDjSetEngine.loadDeckB(targetTrack, transition.targetTimeSec || 0);
+        globalDjSetEngine.syncTransitionProgress(
+          startBeat / beats,
+          selectedPreset,
+          envelopes,
+          beats,
+          transition.sourceTimeSec || 0,
+          transition.targetTimeSec || 0,
+          sourceTrack.bpm || 130,
+          targetTrack.bpm || 130
+        );
+        globalDjSetEngine.play();
+      }
+
       const startTime = performance.now() - (startBeat / beats) * totalDurationMs;
 
       const step = (now: number) => {
@@ -224,10 +242,23 @@ export default function TransitionOverlapStudio({
 
         if (currentB <= beats) {
           setAuditionBeat(currentB);
+          if (sourceTrack && targetTrack) {
+            globalDjSetEngine.syncTransitionProgress(
+              currentB / beats,
+              selectedPreset,
+              envelopes,
+              beats,
+              transition.sourceTimeSec || 0,
+              transition.targetTimeSec || 0,
+              sourceTrack.bpm || 130,
+              targetTrack.bpm || 130
+            );
+          }
           auditionRafRef.current = requestAnimationFrame(step);
         } else {
           setAuditionBeat(beats);
           setIsPlaying(false);
+          globalDjSetEngine.pause();
           auditionRafRef.current = null;
         }
       };
@@ -236,10 +267,11 @@ export default function TransitionOverlapStudio({
     }
   };
 
-  // Clean up animation frame
+  // Clean up animation frame and stop audio
   useEffect(() => {
     return () => {
       if (auditionRafRef.current) cancelAnimationFrame(auditionRafRef.current);
+      globalDjSetEngine.pause();
     };
   }, []);
 
@@ -303,7 +335,7 @@ export default function TransitionOverlapStudio({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-sm font-bold text-white uppercase tracking-wider">MixMeister Transition Overlap Studio</h2>
+                <h2 className="text-sm font-bold text-white uppercase tracking-wider">Waveform Transition Overlap Studio</h2>
                 <span className="px-2 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 text-[10px] font-mono font-bold">
                   3-Band EQ Curves
                 </span>
@@ -442,7 +474,7 @@ export default function TransitionOverlapStudio({
           </div>
         </div>
 
-        {/* ================= MIXMEISTER MULTI-TRACK OVERLAP WAVEFORM & CURVES CANVAS ================= */}
+        {/* ================= WAVEFORM MULTI-TRACK OVERLAP WAVEFORM & CURVES CANVAS ================= */}
         <div className="p-6 flex flex-col gap-2 overflow-y-auto bg-[#0A0C10]">
           
           {/* Top Beat / Bar Ruler */}

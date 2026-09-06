@@ -254,7 +254,7 @@ export interface EnvelopePoint {
 }
 
 export interface TransitionEnvelopes {
-  // 3-Band EQ Overlap Envelopes (MixMeister style)
+  // 3-Band EQ Overlap Envelopes (Waveform style)
   lowA: EnvelopePoint[];    // Outgoing Bass (Orange)
   lowB: EnvelopePoint[];    // Incoming Bass (Orange)
   midA: EnvelopePoint[];    // Outgoing Mid (Yellow/Cyan)
@@ -270,16 +270,20 @@ export interface TransitionConfig {
   sourceTrackId: string;
   sourceSlotId: string;
   sourceSlotName?: string;
+  sourceSlotNumber?: number;
+  sourceTimeSec?: number;
   targetTrackId: string;
   targetSlotId: string;
   targetSlotName?: string;
+  targetSlotNumber?: number;
+  targetTimeSec?: number;
   durationBeats: number; // 8, 16, 32, 64
   durationSec?: number;
   preset: TransitionPresetType;
   curveType?: 'equal-power' | 'linear' | 'cut';
   filterCutoffStart?: number;
   filterCutoffEnd?: number;
-  // MixMeister Overlap & Traktor / Serato Mixer Extensions
+  // Waveform Overlap & Traktor / Serato Mixer Extensions
   envelopes?: TransitionEnvelopes;
   tempoSync?: boolean;
   bpmA?: number;

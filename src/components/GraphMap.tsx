@@ -5,7 +5,7 @@ import { TrackSegment } from '../lib/audioAnalysis';
 import { HotCue, TransitionConfig, TransitionPresetType } from '../types';
 import { PRESET_META } from './DjSetPlayer';
 import TransitionOverlapStudio from './TransitionOverlapStudio';
-import MixMeisterTimeline from './MixMeisterTimeline';
+import WaveformTimeline from './WaveformTimeline';
 import { generateDefaultEnvelopes } from '../lib/djMixerLogic';
 
 interface GraphMapProps {
@@ -18,6 +18,11 @@ interface GraphMapProps {
   activeTransitionId?: string;
   onTransitionsChange?: (transitions: TransitionConfig[]) => void;
   onSelectTransition?: (t: TransitionConfig) => void;
+  currentTime?: number;
+  isPlaying?: boolean;
+  onSeek?: (timeSec: number) => void;
+  onTogglePlay?: () => void;
+  onAutomix?: (orderedTracks: Track[], newTransitions: TransitionConfig[]) => void;
 }
 
 interface Point {
@@ -34,6 +39,8 @@ interface DraggingPortState {
   trackId: string;
   slotId: string;
   slotName: string;
+  slotNumber: number;
+  timeSec: number;
   isRight: boolean;
   startPos: Point;
 }
@@ -59,10 +66,15 @@ export default function GraphMap({
   activeTransitionId,
   onTransitionsChange,
   onSelectTransition,
+  currentTime = 0,
+  isPlaying = false,
+  onSeek,
+  onTogglePlay,
+  onAutomix,
 }: GraphMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // View submode: 'timeline' (MixMeister Multi-Track) or 'canvas' (2D Node Graph)
+  // View submode: 'timeline' (Waveform Multi-Track) or 'canvas' (2D Node Graph)
   const [graphSubMode, setGraphSubMode] = useState<'timeline' | 'canvas'>('timeline');
 
   // Canvas Viewport Transform (Zoom & Pan)
@@ -100,7 +112,6 @@ export default function GraphMap({
 
   // Active Transition Config Modal / Popover on edge
   const [editingTransition, setEditingTransition] = useState<TransitionConfig | null>(null);
-  const [modalPos, setModalPos] = useState<Point | null>(null);
 
   // Initialize layout positions for playlist tracks
   useEffect(() => {
@@ -158,7 +169,6 @@ export default function GraphMap({
   };
 
   const handleContainerPointerDown = (e: React.PointerEvent) => {
-    // If clicking directly on container background or in Pan mode or middle mouse
     if (e.target === containerRef.current || toolMode === 'pan' || e.button === 1 || e.spaceKey) {
       setIsPanning(true);
       setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
@@ -250,7 +260,7 @@ export default function GraphMap({
     if (track.hotCues && track.hotCues.length > 0) {
       track.hotCues.forEach((hc, idx) => {
         slots.push({
-          id: hc.id || `slot-${idx + 1}`,
+          id: hc.id || `slot-${hc.slot || idx + 1}-${track.id}`,
           slotNumber: hc.slot || idx + 1,
           name: hc.name || (hc.isLoop ? `Loop ${hc.loopLengthBeats || 4}B` : `Cue ${idx + 1}`),
           timeSec: hc.timeMs / 1000,
@@ -262,7 +272,7 @@ export default function GraphMap({
     } else if (track.segments && track.segments.length > 0) {
       track.segments.slice(0, 5).forEach((seg, idx) => {
         slots.push({
-          id: seg.id,
+          id: seg.id || `seg-${idx + 1}-${track.id}`,
           slotNumber: idx + 1,
           name: seg.name,
           timeSec: seg.startSec,
@@ -270,14 +280,32 @@ export default function GraphMap({
         });
       });
     } else {
-      // Default slots
+      // Default slots with stable IDs
       slots.push(
-        { id: `s1-${track.id}`, slotNumber: 1, name: 'Intro Cue', timeSec: 0, color: '#3B82F6' },
-        { id: `s2-${track.id}`, slotNumber: 2, name: 'Main Drop', timeSec: 32, color: '#EF4444' },
-        { id: `s3-${track.id}`, slotNumber: 3, name: 'Outro Transition', timeSec: Math.max(60, (track.duration || 180) - 32), color: '#10B981' },
+        { id: `slot-1-${track.id}`, slotNumber: 1, name: 'Intro Cue', timeSec: 0, color: '#3B82F6' },
+        { id: `slot-2-${track.id}`, slotNumber: 2, name: 'Main Drop', timeSec: 32, color: '#EF4444' },
+        { id: `slot-3-${track.id}`, slotNumber: 3, name: 'Outro Transition', timeSec: Math.max(60, (track.duration || 180) - 32), color: '#10B981' },
       );
     }
     return slots;
+  };
+
+  // Multi-tier slot index resolution: Never blindly defaults to 0 if slotNumber or name matches!
+  const findSlotIndex = (slots: TrackSlotInfo[], slotId?: string, slotNumber?: number, slotName?: string): number => {
+    if (!slots || slots.length === 0) return 0;
+    if (slotId) {
+      const idx = slots.findIndex(s => s.id === slotId);
+      if (idx !== -1) return idx;
+    }
+    if (slotNumber !== undefined) {
+      const idx = slots.findIndex(s => s.slotNumber === slotNumber);
+      if (idx !== -1) return idx;
+    }
+    if (slotName) {
+      const idx = slots.findIndex(s => s.name.toLowerCase() === slotName.toLowerCase());
+      if (idx !== -1) return idx;
+    }
+    return 0;
   };
 
   const handlePortPointerDown = (e: React.PointerEvent, track: Track, slot: TrackSlotInfo, isRight: boolean) => {
@@ -287,6 +315,8 @@ export default function GraphMap({
       trackId: track.id,
       slotId: slot.id,
       slotName: slot.name,
+      slotNumber: slot.slotNumber,
+      timeSec: slot.timeSec,
       isRight,
       startPos: canvasPt,
     });
@@ -309,15 +339,19 @@ export default function GraphMap({
       return;
     }
 
-    // Create new TransitionConfig with default 3-Band MixMeister envelopes
+    // Create new TransitionConfig with full slot metadata
     const newTransition: TransitionConfig = {
       id: `tr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
       sourceTrackId: drawingPort.trackId,
       sourceSlotId: drawingPort.slotId,
       sourceSlotName: drawingPort.slotName,
+      sourceSlotNumber: drawingPort.slotNumber,
+      sourceTimeSec: drawingPort.timeSec,
       targetTrackId: targetTrack.id,
       targetSlotId: targetSlot.id,
       targetSlotName: targetSlot.name,
+      targetSlotNumber: targetSlot.slotNumber,
+      targetTimeSec: targetSlot.timeSec,
       durationBeats: 32, // Default 32 beats
       preset: 'bass-swap', // Default instant bass switch
       envelopes: generateDefaultEnvelopes('bass-swap', 32),
@@ -378,7 +412,7 @@ export default function GraphMap({
         }}
       />
 
-      {/* Top Right Submode Switcher (MixMeister Timeline vs Node Graph) */}
+      {/* Top Right Submode Switcher (Waveform Timeline vs Node Graph) */}
       <div className="absolute top-4 right-4 z-40 flex items-center gap-3">
         <div className="flex items-center gap-1 bg-[#161920]/90 border border-[#242936] p-1 rounded-xl shadow-xl backdrop-blur-md">
           <button
@@ -388,10 +422,10 @@ export default function GraphMap({
                 ? 'bg-purple-600 text-white shadow-md'
                 : 'text-gray-400 hover:text-white'
             }`}
-            title="MixMeister Multi-Track Zeitleiste"
+            title="Waveform Multi-Track Zeitleiste"
           >
             <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-            <span>MixMeister Timeline</span>
+            <span>Waveform Timeline</span>
           </button>
           <button
             onClick={() => setGraphSubMode('canvas')}
@@ -410,10 +444,15 @@ export default function GraphMap({
 
       {graphSubMode === 'timeline' ? (
         <div className="absolute inset-0 pt-16 flex flex-col">
-          <MixMeisterTimeline
+          <WaveformTimeline
             tracks={tracks}
             transitions={localTransitions}
             activeTransitionId={activeTransitionId}
+            currentTime={currentTime}
+            isPlaying={isPlaying}
+            onSeek={onSeek}
+            onTogglePlay={onTogglePlay}
+            onAutomix={onAutomix}
             onSelectTransition={(t) => {
               if (onSelectTransition) onSelectTransition(t);
             }}
@@ -517,8 +556,8 @@ export default function GraphMap({
             const srcSlots = getTrackSlots(srcTrack);
             const tgtSlots = getTrackSlots(tgtTrack);
 
-            const srcSlotIdx = Math.max(0, srcSlots.findIndex(s => s.id === tr.sourceSlotId));
-            const tgtSlotIdx = Math.max(0, tgtSlots.findIndex(s => s.id === tr.targetSlotId));
+            const srcSlotIdx = findSlotIndex(srcSlots, tr.sourceSlotId, tr.sourceSlotNumber, tr.sourceSlotName);
+            const tgtSlotIdx = findSlotIndex(tgtSlots, tr.targetSlotId, tr.targetSlotNumber, tr.targetSlotName);
 
             const start = getNodePortCoord(tr.sourceTrackId, srcSlotIdx, true);
             const end = getNodePortCoord(tr.targetTrackId, tgtSlotIdx, false);
@@ -585,8 +624,8 @@ export default function GraphMap({
 
           const srcSlots = getTrackSlots(srcTrack);
           const tgtSlots = getTrackSlots(tgtTrack);
-          const srcSlotIdx = Math.max(0, srcSlots.findIndex(s => s.id === tr.sourceSlotId));
-          const tgtSlotIdx = Math.max(0, tgtSlots.findIndex(s => s.id === tr.targetSlotId));
+          const srcSlotIdx = findSlotIndex(srcSlots, tr.sourceSlotId, tr.sourceSlotNumber, tr.sourceSlotName);
+          const tgtSlotIdx = findSlotIndex(tgtSlots, tr.targetSlotId, tr.targetSlotNumber, tr.targetSlotName);
 
           const start = getNodePortCoord(tr.sourceTrackId, srcSlotIdx, true);
           const end = getNodePortCoord(tr.targetTrackId, tgtSlotIdx, false);
@@ -631,13 +670,16 @@ export default function GraphMap({
           const pos = positions[track.id] || { x: 80, y: 80 };
           const isSelected = selectedNodeId === track.id;
           const slots = getTrackSlots(track);
+          const isCandidateTarget = drawingPort && drawingPort.trackId !== track.id;
 
           return (
             <div
               key={track.id}
-              className={`absolute flex flex-col w-[230px] bg-[#161920] border rounded-2xl shadow-2xl z-20 transition-shadow ${
+              className={`absolute flex flex-col w-[230px] bg-[#161920] border rounded-2xl shadow-2xl z-20 transition-all ${
                 isSelected 
                   ? 'border-purple-500 shadow-[0_0_24px_rgba(168,85,247,0.35)]' 
+                  : isCandidateTarget
+                  ? 'border-emerald-500/70 shadow-[0_0_20px_rgba(16,185,129,0.25)]'
                   : 'border-[#242936] hover:border-gray-600'
               }`}
               style={{ left: pos.x, top: pos.y }}
@@ -677,15 +719,30 @@ export default function GraphMap({
                   <span>OUT (Mix)</span>
                 </div>
 
-                {slots.map((slot, sIdx) => {
+                {slots.map((slot) => {
                   return (
                     <div
                       key={slot.id}
-                      className="relative h-9 bg-[#0D0E12] border border-[#242936] rounded-lg flex items-center justify-between px-2.5 group hover:border-purple-500/80 transition-colors"
+                      onPointerUp={(e) => {
+                        if (isCandidateTarget) {
+                          handlePortPointerUp(e, track, slot);
+                        }
+                      }}
+                      data-slot-number={slot.slotNumber}
+                      data-slot-name={slot.name}
+                      className={`slot-row relative h-9 rounded-lg flex items-center justify-between px-2.5 group transition-all ${
+                        isCandidateTarget
+                          ? 'bg-emerald-950/40 border border-emerald-500/60 hover:bg-emerald-900/60 hover:border-emerald-400 cursor-pointer shadow-md'
+                          : 'bg-[#0D0E12] border border-[#242936] hover:border-purple-500/80'
+                      }`}
                     >
                       {/* Left Port (Input Connector) */}
                       <div
-                        className="absolute -left-2.5 top-1/2 -translate-y-1/2 w-5 h-5 bg-[#161920] border-2 border-[#242936] rounded-full cursor-crosshair hover:bg-emerald-500 hover:border-emerald-400 transition-all flex items-center justify-center group-hover:scale-110 z-30"
+                        className={`absolute -left-2.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full cursor-crosshair transition-all flex items-center justify-center group-hover:scale-110 z-30 ${
+                          isCandidateTarget
+                            ? 'bg-emerald-500 border-2 border-white shadow-[0_0_8px_rgba(16,185,129,0.9)] animate-pulse'
+                            : 'bg-[#161920] border-2 border-[#242936] hover:bg-emerald-500 hover:border-emerald-400'
+                        }`}
                         title={`Ziel: ${slot.name} anbinden`}
                         onPointerUp={(e) => handlePortPointerUp(e, track, slot)}
                       >
@@ -753,7 +810,7 @@ export default function GraphMap({
       </>
       )}
 
-      {/* ================= MIXMEISTER TRANSITION OVERLAP STUDIO MODAL ================= */}
+      {/* ================= WAVEFORM TRANSITION OVERLAP STUDIO MODAL ================= */}
       {editingTransition && (
         <TransitionOverlapStudio
           transition={editingTransition}
