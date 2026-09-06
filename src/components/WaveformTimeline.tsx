@@ -21,9 +21,12 @@ interface WaveformTimelineProps {
   onTrackUpdated?: (track: TrackDef) => void;
 }
 
+const TIMELINE_HEADER_WIDTH = 256; // Left sticky track info header width
+
 interface TrackLayout {
   track: TrackDef;
   index: number;
+  baselineStartSec: number;
   startSec: number;
   durationSec: number;
   endSec: number;
@@ -77,53 +80,78 @@ export default function WaveformTimeline({
     reference?: TrackDef | null;
   } | null>(null);
 
-  // Pixels per second calculation
-  const pxPerSec = 2.2 * zoomLevel;
+  // Pixels per second calculation (scales smoothly with zoom)
+  const pxPerSec = 3.2 * zoomLevel;
 
-  // Compute start and end times for each track in the set based on transitions overlap & manual offsets
+  // Compute start and end times for each track in the set
   const trackLayouts: TrackLayout[] = useMemo(() => {
     const layouts: TrackLayout[] = [];
-    let currentAccumulatedTime = 0;
 
     for (let i = 0; i < tracks.length; i++) {
       const track = tracks[i];
       const duration = track.duration || 180;
-      const nextTrack = tracks[i + 1];
 
-      let transitionDurationSec = 30; // default 30s
+      let baselineStartSec = 0;
       let outTrans: TransitionConfig | undefined;
+      let inTrans: TransitionConfig | undefined;
 
-      if (nextTrack) {
+      if (i > 0) {
+        const prevLayout = layouts[i - 1];
+        const prevTrack = prevLayout.track;
+        const prevBpm = prevTrack.bpm || 130;
+
+        inTrans = transitions.find(t => 
+          (t.sourceTrackId === prevTrack.id && t.targetTrackId === track.id) ||
+          (t.sourceTrackId === prevTrack.id)
+        );
+
+        const durationBeats = inTrans?.durationBeats || 32;
+        const transDurationSec = durationBeats * (60 / prevBpm);
+
+        // Transition is firmly anchored to prevTrack's mixout position on the master timeline
+        const prevMixoutSec = inTrans?.sourceTimeSec !== undefined
+          ? inTrans.sourceTimeSec
+          : Math.max(0, prevLayout.durationSec - transDurationSec);
+
+        const transFrameStartSec = prevLayout.startSec + prevMixoutSec;
+
+        const currMixinSec = inTrans?.targetTimeSec !== undefined
+          ? inTrans.targetTimeSec
+          : 0;
+
+        // Baseline start lines up Track i's mixin point with the transition window
+        baselineStartSec = Math.max(0, transFrameStartSec - currMixinSec);
+      }
+
+      if (i < tracks.length - 1) {
+        const nextTrack = tracks[i + 1];
         outTrans = transitions.find(t => 
           (t.sourceTrackId === track.id && t.targetTrackId === nextTrack.id) ||
           (t.sourceTrackId === track.id)
         );
-        if (outTrans) {
-          const bpm = track.bpm || 130;
-          transitionDurationSec = (outTrans.durationBeats * (60 / bpm));
-        }
       }
 
       // Incorporate manual timeline slip offset
       const manualOffset = (trackOffsets[track.id] || 0) + (draggingTrackId === track.id ? activeDragDeltaSec : 0);
-      const startSec = Math.max(0, currentAccumulatedTime + manualOffset);
+      const startSec = Math.max(0, baselineStartSec + manualOffset);
       const endSec = startSec + duration;
 
       layouts.push({
         track,
         index: i + 1,
+        baselineStartSec,
         startSec,
         durationSec: duration,
         endSec,
         outgoingTransition: outTrans,
+        incomingTransition: inTrans,
       });
-
-      currentAccumulatedTime = nextTrack ? endSec - transitionDurationSec : endSec;
     }
     return layouts;
   }, [tracks, transitions, trackOffsets, draggingTrackId, activeDragDeltaSec]);
 
   // Compute unified transition overlap zones that span ACROSS BOTH LANES
+  // The transition frame STAYS ANCHORED to Track A (source track)
   const overlapZones: TransitionOverlapZone[] = useMemo(() => {
     const zones: TransitionOverlapZone[] = [];
     const LANE_HEIGHT = 112; // h-28 is 112px
@@ -133,52 +161,56 @@ export default function WaveformTimeline({
     for (let i = 0; i < trackLayouts.length - 1; i++) {
       const layoutA = trackLayouts[i];
       const layoutB = trackLayouts[i + 1];
+      const trackA = layoutA.track;
+      const bpmA = trackA.bpm || 130;
 
-      // Overlap occurs when layoutA.endSec > layoutB.startSec
-      if (layoutA.endSec > layoutB.startSec) {
-        const overlapStartSec = layoutB.startSec;
-        const overlapEndSec = Math.min(layoutA.endSec, layoutB.endSec);
-        const overlapDurationSec = Math.max(0, overlapEndSec - overlapStartSec);
+      const found = transitions.find(t => t.sourceTrackId === layoutA.track.id && t.targetTrackId === layoutB.track.id);
+      const durationBeats = found?.durationBeats || 32;
+      const transDurationSec = durationBeats * (60 / bpmA);
 
-        if (overlapDurationSec > 0) {
-          const found = transitions.find(t => t.sourceTrackId === layoutA.track.id && t.targetTrackId === layoutB.track.id);
-          const trans: TransitionConfig = found || {
-            id: `tr-${layoutA.track.id}-${layoutB.track.id}`,
-            sourceTrackId: layoutA.track.id,
-            targetTrackId: layoutB.track.id,
-            sourceSlotId: 'outro',
-            targetSlotId: 'intro',
-            durationBeats: Math.max(8, Math.round(overlapDurationSec / (60 / (layoutA.track.bpm || 130)))),
-            preset: 'bass-swap' as TransitionPresetType,
-            envelopes: generateDefaultEnvelopes('bass-swap', 32),
-          };
+      // Anchored strictly to Track A's outro position!
+      const mixoutSec = found?.sourceTimeSec !== undefined
+        ? found.sourceTimeSec
+        : Math.max(0, layoutA.durationSec - transDurationSec);
 
-          const keyComp = evaluateKeyCompatibility(layoutA.track.key, layoutB.track.key);
+      const overlapStartSec = layoutA.startSec + mixoutSec;
+      const overlapEndSec = overlapStartSec + transDurationSec;
 
-          zones.push({
-            transition: trans,
-            sourceLayout: layoutA,
-            targetLayout: layoutB,
-            overlapStartSec,
-            overlapEndSec,
-            overlapDurationSec,
-            overlapStartPx: overlapStartSec * pxPerSec,
-            overlapWidthPx: overlapDurationSec * pxPerSec,
-            topPx: PADDING_TOP + (i * (LANE_HEIGHT + LANE_GAP)),
-            heightPx: (LANE_HEIGHT * 2) + LANE_GAP, // Spans both Lane i and Lane i+1!
-            keyComp,
-          });
-        }
-      }
+      const trans: TransitionConfig = found || {
+        id: `tr-${layoutA.track.id}-${layoutB.track.id}`,
+        sourceTrackId: layoutA.track.id,
+        targetTrackId: layoutB.track.id,
+        sourceSlotId: 'outro',
+        targetSlotId: 'intro',
+        durationBeats,
+        preset: 'bass-swap' as TransitionPresetType,
+        envelopes: generateDefaultEnvelopes('bass-swap', durationBeats),
+      };
+
+      const keyComp = evaluateKeyCompatibility(layoutA.track.key, layoutB.track.key);
+
+      zones.push({
+        transition: trans,
+        sourceLayout: layoutA,
+        targetLayout: layoutB,
+        overlapStartSec,
+        overlapEndSec,
+        overlapDurationSec: transDurationSec,
+        overlapStartPx: overlapStartSec * pxPerSec,
+        overlapWidthPx: transDurationSec * pxPerSec,
+        topPx: PADDING_TOP + (i * (LANE_HEIGHT + LANE_GAP)),
+        heightPx: (LANE_HEIGHT * 2) + LANE_GAP, // Spans both Lane i and Lane i+1!
+        keyComp,
+      });
     }
     return zones;
-  }, [trackLayouts, pxPerSec]);
+  }, [trackLayouts, transitions, pxPerSec]);
 
   const totalSetDurationSec = trackLayouts.length > 0 
     ? Math.max(...trackLayouts.map(l => l.endSec), 300) 
     : 300;
 
-  const totalTimelineWidthPx = Math.max(1200, totalSetDurationSec * pxPerSec + 350);
+  const totalTimelineWidthPx = Math.max(1600, TIMELINE_HEADER_WIDTH + (totalSetDurationSec * pxPerSec) + 400);
 
   const formatTime = (sec: number) => {
     const m = Math.floor(sec / 60);
@@ -187,9 +219,9 @@ export default function WaveformTimeline({
   };
 
   const handleRulerClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!onSeek) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
+    if (!onSeek || !containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const clickX = e.clientX - rect.left + containerRef.current.scrollLeft - TIMELINE_HEADER_WIDTH;
     const seekSec = Math.max(0, Math.min(totalSetDurationSec, clickX / pxPerSec));
     onSeek(seekSec);
   };
@@ -203,68 +235,71 @@ export default function WaveformTimeline({
   // --- Waveform Horizontal Drag & Slip Handlers ---
   const handleWaveformPointerDown = (e: React.PointerEvent, trackId: string) => {
     e.stopPropagation();
-    try {
-      (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-    } catch {}
     setDraggingTrackId(trackId);
     setDragStartX(e.clientX);
     setActiveDragDeltaSec(0);
   };
 
-  const handleWaveformPointerMove = (e: React.PointerEvent) => {
+  useEffect(() => {
     if (!draggingTrackId) return;
-    const deltaPx = e.clientX - dragStartX;
-    let deltaSec = deltaPx / pxPerSec;
 
-    // Phrase snap (4-beat bars by default, hold Shift for smooth free slip)
-    const track = tracks.find(t => t.id === draggingTrackId);
-    const bpm = track?.bpm || 130;
-    const barSec = (60 / bpm) * 4;
+    const handlePointerMove = (e: PointerEvent) => {
+      const deltaPx = e.clientX - dragStartX;
+      const deltaSec = deltaPx / pxPerSec;
+      setActiveDragDeltaSec(deltaSec);
+    };
 
-    if (!e.shiftKey && barSec > 0) {
-      deltaSec = Math.round(deltaSec / barSec) * barSec;
-    }
+    const handlePointerUp = (e: PointerEvent) => {
+      const trackId = draggingTrackId;
+      const trackIdx = trackLayouts.findIndex(l => l.track.id === trackId);
 
-    setActiveDragDeltaSec(deltaSec);
-  };
+      if (trackIdx !== -1) {
+        const layout = trackLayouts[trackIdx];
+        const track = layout.track;
 
-  const handleWaveformPointerUp = (e: React.PointerEvent) => {
-    if (!draggingTrackId) return;
-    const trackId = draggingTrackId;
-    const finalDeltaSec = activeDragDeltaSec;
+        // Reference track to synchronize phase and beats with (Deck A if available, else self)
+        const refLayout = trackIdx > 0 ? trackLayouts[trackIdx - 1] : null;
+        const refBpm = refLayout?.track.bpm || track.bpm || 130;
+        const beatSec = 60 / refBpm;
+        const barSec = beatSec * 4; // 1 bar = 4 beats
 
-    setTrackOffsets(prev => ({
-      ...prev,
-      [trackId]: (prev[trackId] || 0) + finalDeltaSec,
-    }));
+        // Snap to full 4-beat bar grid by default, or 1-beat grid if Shift is held
+        const snapInterval = e.shiftKey ? beatSec : barSec;
 
-    setDraggingTrackId(null);
-    setActiveDragDeltaSec(0);
+        // Current raw start time of this track including activeDragDeltaSec
+        const rawStart = layout.startSec;
+        const refStart = refLayout ? refLayout.startSec : 0;
 
-    // If onTransitionsChange is provided, update durationBeats for affected transitions
-    if (onTransitionsChange && overlapZones.length > 0) {
-      const updatedTransitions = transitions.map(tr => {
-        const zone = overlapZones.find(z => z.transition.id === tr.id);
-        if (zone) {
-          const srcTrack = tracks.find(t => t.id === tr.sourceTrackId);
-          const bpm = srcTrack?.bpm || 130;
-          const beats = Math.max(8, Math.round(zone.overlapDurationSec / (60 / bpm)));
-          return {
-            ...tr,
-            durationBeats: beats,
-          };
-        }
-        return tr;
-      });
-      onTransitionsChange(updatedTransitions);
-    }
-  };
+        // Snap to nearest bar/beat relative to reference track
+        const elapsedFromRef = rawStart - refStart;
+        const snappedElapsed = Math.round(elapsedFromRef / snapInterval) * snapInterval;
+        const snappedStart = Math.max(0, refStart + snappedElapsed);
+
+        // Record final offset relative to baselineStartSec
+        const finalOffset = snappedStart - layout.baselineStartSec;
+
+        setTrackOffsets(prev => ({
+          ...prev,
+          [trackId]: finalOffset,
+        }));
+      }
+
+      setDraggingTrackId(null);
+      setActiveDragDeltaSec(0);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [draggingTrackId, dragStartX, pxPerSec, trackLayouts]);
 
   return (
     <div 
       className="flex-1 flex flex-col bg-[#0A0C10] overflow-hidden select-none relative"
-      onPointerMove={handleWaveformPointerMove}
-      onPointerUp={handleWaveformPointerUp}
     >
       
       {/* ================= TIMELINE TOOLBAR ================= */}
@@ -346,6 +381,7 @@ export default function WaveformTimeline({
       {/* ================= SCROLLABLE MULTI-TRACK LANES ================= */}
       <div 
         ref={containerRef}
+        data-timeline-scroll-container="true"
         className="flex-1 overflow-x-auto overflow-y-auto relative bg-[#0D0E12]"
       >
         <div 
@@ -355,12 +391,18 @@ export default function WaveformTimeline({
           {/* Global Time & Bar Ruler */}
           <div 
             onClick={handleRulerClick}
-            className="sticky top-0 h-9 bg-[#161920] border-b border-[#242936] z-30 flex items-center px-2 cursor-pointer group shadow-md"
+            className="sticky top-0 h-9 bg-[#161920] border-b border-[#242936] z-40 flex items-center cursor-pointer group shadow-md"
+            style={{ width: `${totalTimelineWidthPx}px` }}
           >
+            {/* Sticky Left Spacer for ZEIT / TAKTE */}
+            <div className="sticky left-0 w-64 h-full bg-[#161920] border-r border-[#242936] z-50 flex items-center px-3 font-mono text-[10px] text-gray-400 font-bold uppercase tracking-wider shrink-0 shadow-md">
+              <span>ZEIT / TAKTE</span>
+            </div>
+
             {/* 15-Second Interval Markers */}
             {Array.from({ length: Math.ceil(totalSetDurationSec / 15) + 1 }).map((_, idx) => {
               const sec = idx * 15;
-              const x = sec * pxPerSec;
+              const x = TIMELINE_HEADER_WIDTH + (sec * pxPerSec);
               const isMinute = sec % 60 === 0;
 
               return (
@@ -382,7 +424,7 @@ export default function WaveformTimeline({
             {/* Red Playhead in Ruler */}
             <div 
               className="absolute top-0 bottom-0 w-3 -ml-1.5 flex items-center justify-center pointer-events-none transition-[left] duration-75 z-40"
-              style={{ left: `${currentTime * pxPerSec}px` }}
+              style={{ left: `${TIMELINE_HEADER_WIDTH + (currentTime * pxPerSec)}px` }}
             >
               <div className="w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-t-[8px] border-t-red-500 drop-shadow-[0_0_6px_rgba(239,68,68,1)]" />
             </div>
@@ -391,7 +433,7 @@ export default function WaveformTimeline({
           {/* Vertical Playhead Needle Across All Lanes */}
           <div 
             className="absolute top-9 bottom-0 w-[2px] bg-red-500 z-30 pointer-events-none drop-shadow-[0_0_10px_rgba(239,68,68,1)] transition-[left] duration-75"
-            style={{ left: `${currentTime * pxPerSec}px` }}
+            style={{ left: `${TIMELINE_HEADER_WIDTH + (currentTime * pxPerSec)}px` }}
           />
 
           {/* ================= TRACK LANES CONTAINER ================= */}
@@ -400,7 +442,7 @@ export default function WaveformTimeline({
             {/* TRACK LANES */}
             {trackLayouts.map((layout, idx) => {
               const track = layout.track;
-              const leftPx = layout.startSec * pxPerSec;
+              const waveformLeftPx = TIMELINE_HEADER_WIDTH + (layout.startSec * pxPerSec);
               const widthPx = layout.durationSec * pxPerSec;
               const isDraggingThis = draggingTrackId === track.id;
 
@@ -418,6 +460,7 @@ export default function WaveformTimeline({
                       ? 'border-purple-400 shadow-[0_0_20px_rgba(168,85,247,0.3)] bg-[#171922]' 
                       : 'border-[#242936] hover:border-gray-600'
                   }`}
+                  style={{ width: `${totalTimelineWidthPx}px` }}
                 >
                   {/* Left Track Info Strip (Sticky Left Anchor) */}
                   <div className="sticky left-0 w-64 h-full bg-[#161920]/95 border-r border-[#242936] p-2.5 z-20 flex items-center gap-3 backdrop-blur-md shadow-md shrink-0">
@@ -470,14 +513,15 @@ export default function WaveformTimeline({
                   {/* ================= DRAGGABLE WAVEFORM STRIP ================= */}
                   <div 
                     data-waveform-strip="true"
+                    data-track-id={track.id}
                     className={`waveform-lane-grab absolute top-1 bottom-1 rounded-lg overflow-hidden border bg-[#0B0D12] flex items-center transition-shadow ${
                       isDraggingThis
                         ? 'border-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.5)] cursor-grabbing'
                         : 'border-cyan-500/20 hover:border-cyan-400/50 cursor-grab'
                     }`}
-                    style={{ left: `${leftPx}px`, width: `${widthPx}px` }}
+                    style={{ left: `${waveformLeftPx}px`, width: `${widthPx}px` }}
                     onPointerDown={(e) => handleWaveformPointerDown(e, track.id)}
-                    title="Gedrückt halten & ziehen: Wellenform horizontal auf der Zeitleiste verschieben"
+                    title="Gedrückt halten & ziehen: Wellenform horizontal auf der Zeitleiste verschieben (rastet am Taktraster ein)"
                   >
                     {/* Visual Beatgrid Markers Overlay */}
                     <div className="absolute inset-0 pointer-events-none opacity-40">
@@ -559,18 +603,21 @@ export default function WaveformTimeline({
             {overlapZones.map((zone, zIdx) => {
               const trans = zone.transition;
               const isTransitionActive = trans.id === activeTransitionId;
+              const frameLeftPx = TIMELINE_HEADER_WIDTH + zone.overlapStartPx;
 
               return (
                 <div
                   key={`unified-frame-${trans.id}-${zIdx}`}
-                  className={`absolute z-30 rounded-2xl border-2 transition-all pointer-events-auto backdrop-blur-[1px] flex flex-col justify-between p-3 group/frame ${
+                  data-transition-frame="true"
+                  data-transition-id={trans.id}
+                  className={`transition-bounding-frame absolute z-30 rounded-2xl border-2 transition-all pointer-events-none backdrop-blur-[1px] flex flex-col justify-between p-3 group/frame ${
                     isTransitionActive
                       ? 'border-purple-400 bg-purple-950/25 shadow-[0_0_35px_rgba(168,85,247,0.5)] ring-2 ring-purple-500/50'
                       : 'border-cyan-400/90 bg-cyan-950/20 hover:border-purple-400 hover:bg-purple-950/30 shadow-[0_0_25px_rgba(6,182,212,0.25)]'
                   }`}
                   style={{
                     top: `${zone.topPx}px`,
-                    left: `${zone.overlapStartPx}px`,
+                    left: `${frameLeftPx}px`,
                     width: `${Math.max(160, zone.overlapWidthPx)}px`,
                     height: `${zone.heightPx}px`,
                   }}
@@ -579,7 +626,7 @@ export default function WaveformTimeline({
                   }}
                 >
                   {/* TOP HEADER: TRANSITION INFO & BUTTONS */}
-                  <div className="flex items-center justify-between z-20 gap-2 flex-wrap">
+                  <div className="flex items-center justify-between z-20 gap-2 flex-wrap pointer-events-auto">
                     <div className="flex items-center gap-2 bg-black/90 px-2.5 py-1 rounded-lg border border-[#242936] text-[10px] font-mono font-bold text-white shadow-md">
                       <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
                       <span>ÜBERGANG: {trans.preset.toUpperCase()}</span>
@@ -705,7 +752,7 @@ export default function WaveformTimeline({
                   </div>
 
                   {/* BOTTOM FOOTER: EQ FREQUENCY LEGEND */}
-                  <div className="flex items-center justify-between text-[8px] font-mono bg-black/85 px-2 py-1 rounded-md border border-[#242936] text-gray-300">
+                  <div className="flex items-center justify-between text-[8px] font-mono bg-black/85 px-2 py-1 rounded-md border border-[#242936] text-gray-300 pointer-events-auto">
                     <span className="flex items-center gap-1 text-orange-400 font-bold">
                       <span className="w-2 h-2 rounded-full bg-orange-500 inline-block" />
                       <span>Tief / Bass</span>
