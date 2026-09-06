@@ -24,9 +24,13 @@ export interface SetTimeUpdateEvent {
   setTimeSec: number;
   totalDurationSec: number;
   activeTrackIndex: number;
+  activeTrackId?: string;
+  incomingTrackId?: string;
   activeTransitionId: string | null;
   transitionProgress: number;
+  crossfaderPosition: number;
   isPlaying: boolean;
+  transitionState?: TransitionState;
 }
 
 export class DjSetAudioEngine {
@@ -68,6 +72,12 @@ export class DjSetAudioEngine {
   private lastRafTimestamp: number = 0;
   private isSetMode: boolean = false;
   private onSetTimeUpdateCallback?: (event: SetTimeUpdateEvent) => void;
+  private currentActiveTrackIndex: number = 0;
+  private currentActiveTrackId?: string;
+  private currentIncomingTrackId?: string;
+  private currentActiveTransitionId: string | null = null;
+  private currentCrossfaderPosition: number = 0;
+  private currentSetTransitionState?: TransitionState;
 
   constructor() {
     // Lazy AudioContext initialization on user gesture
@@ -490,6 +500,18 @@ export class DjSetAudioEngine {
         nextLayout.track.bpm || 130
       );
 
+      this.currentActiveTrackIndex = activeTrackIdx;
+      this.currentActiveTrackId = currentLayout.track.id;
+      this.currentIncomingTrackId = nextLayout.track.id;
+      this.currentActiveTransitionId = trans.id;
+      this.currentCrossfaderPosition = progress;
+      this.currentSetTransitionState = this.computeTransitionState(
+        progress,
+        trans.preset,
+        trans.envelopes,
+        trans.durationBeats
+      );
+
       if (this.isPlaying) {
         if (this.audioA && this.audioA.paused) this.audioA.play().catch(() => {});
         if (this.audioB && this.audioB.paused) this.audioB.play().catch(() => {});
@@ -515,6 +537,18 @@ export class DjSetAudioEngine {
       if (this.audioB && !this.audioB.paused) {
         this.audioB.pause();
       }
+
+      this.currentActiveTrackIndex = activeTrackIdx;
+      this.currentActiveTrackId = currentLayout.track.id;
+      this.currentIncomingTrackId = nextLayout ? nextLayout.track.id : undefined;
+      this.currentActiveTransitionId = null;
+      this.currentCrossfaderPosition = 0;
+      this.currentSetTransitionState = this.computeTransitionState(
+        0,
+        'bass-swap',
+        undefined,
+        32
+      );
 
       if (this.isPlaying && this.audioA && this.audioA.paused) {
         this.audioA.play().catch(() => {});
@@ -545,10 +579,14 @@ export class DjSetAudioEngine {
     this.onSetTimeUpdateCallback({
       setTimeSec: this.setPlayheadSec,
       totalDurationSec,
-      activeTrackIndex: 0,
-      activeTransitionId: null,
-      transitionProgress: this.currentProgress,
+      activeTrackIndex: this.currentActiveTrackIndex,
+      activeTrackId: this.currentActiveTrackId,
+      incomingTrackId: this.currentIncomingTrackId,
+      activeTransitionId: this.currentActiveTransitionId,
+      transitionProgress: this.currentCrossfaderPosition,
+      crossfaderPosition: this.currentCrossfaderPosition,
       isPlaying: this.isPlaying,
+      transitionState: this.currentSetTransitionState,
     });
   }
 

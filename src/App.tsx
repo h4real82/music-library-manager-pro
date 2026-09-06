@@ -12,7 +12,8 @@ import CamelotWheel from './components/CamelotWheel';
 import DjFilters from './components/DjFilters';
 import SetPlaylistDrawer from './components/SetPlaylistDrawer';
 import DjSetPlayer from './components/DjSetPlayer';
-import { globalDjSetEngine } from './lib/djSetAudioEngine';
+import SetExportModal from './components/SetExportModal';
+import { globalDjSetEngine, SetTimeUpdateEvent } from './lib/djSetAudioEngine';
 import { analyzeTrackSegments, TrackSegment } from './lib/audioAnalysis';
 import { TrackDef, MulimaGroup, HotCue, PlaylistDef, TransitionConfig } from './types';
 
@@ -547,33 +548,53 @@ export default function App() {
   };
 
   // Playlists CRUD
-  const handleCreatePlaylist = () => {
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
+  const [isSetExportModalOpen, setIsSetExportModalOpen] = useState<boolean>(false);
+  const [liveSetEvent, setLiveSetEvent] = useState<SetTimeUpdateEvent | null>(null);
+  const [activeSetTrackIndex, setActiveSetTrackIndex] = useState<number>(0);
+
+  const handleCreatePlaylist = (customTracks?: Track[]) => {
     if (!newPlaylistName.trim()) return;
+    const tracksToSave = customTracks || (playlist.length > 0 ? playlist : []);
     const newPlaylist = {
-      id: Math.random().toString(36).substring(2, 9),
-      name: newPlaylistName,
-      trackIds: playlist.map(t => t.id) // save current Chapter as starting point if wanted, or empty
+      id: 'pl_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6),
+      name: newPlaylistName.trim(),
+      trackIds: tracksToSave.map(t => t.id)
     };
-    newPlaylist.trackIds = []; // Empty playlist by default
     savePlaylist(newPlaylist);
     setPlaylists(prev => [...prev, newPlaylist]);
+    setSelectedPlaylistId(newPlaylist.id);
     setIsCreatingPlaylist(false);
     setNewPlaylistName('');
+  };
+
+  const handleSaveSetAsPlaylist = (name: string, customTracks?: Track[]) => {
+    const tracksToSave = customTracks || (playlist.length > 0 ? playlist : tracks.slice(0, 8));
+    const newPlaylist: Playlist = {
+      id: 'pl_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6),
+      name: name.trim() || `Set Playlist ${new Date().toLocaleDateString('de-DE')}`,
+      trackIds: tracksToSave.map(t => t.id)
+    };
+    savePlaylist(newPlaylist);
+    setPlaylists(prev => [...prev, newPlaylist]);
+    setSelectedPlaylistId(newPlaylist.id);
   };
 
   const handleDeletePlaylist = (id: string) => {
     deletePlaylist(id);
     setPlaylists(prev => prev.filter(p => p.id !== id));
+    if (selectedPlaylistId === id) setSelectedPlaylistId(null);
   };
 
   const handleDuplicatePlaylist = (p: Playlist) => {
     const newPlaylist = {
-      id: Math.random().toString(36).substring(2, 9),
+      id: 'pl_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6),
       name: `${p.name} (Copy)`,
       trackIds: [...p.trackIds]
     };
     savePlaylist(newPlaylist);
     setPlaylists(prev => [...prev, newPlaylist]);
+    setSelectedPlaylistId(newPlaylist.id);
   };
 
   const handleSaveEditPlaylist = (id: string) => {
@@ -597,6 +618,7 @@ export default function App() {
   const loadPlaylist = (p: Playlist) => {
     const loadedTracks = p.trackIds.map(id => tracks.find(t => t.id === id)).filter(Boolean) as Track[];
     setPlaylist(loadedTracks);
+    setSelectedPlaylistId(p.id);
   };
 
   const addToPlaylist = (track: Track) => {
@@ -646,12 +668,23 @@ export default function App() {
 
   const activeTransition = setTransitions.find(t => t.id === activeTransitionId) || setTransitions[0] || null;
   const graphDisplayTracks = playlist.length > 0 ? playlist : tracks.slice(0, 8);
-  const deckATrack = activeTransition 
+
+  // Dynamic Decks: Real-time track detection during DJ set playback
+  const liveDeckATrack = liveSetEvent?.activeTrackId
+    ? (tracks.find(t => t.id === liveSetEvent.activeTrackId) || graphDisplayTracks[activeSetTrackIndex] || null)
+    : null;
+
+  const liveDeckBTrack = liveSetEvent?.incomingTrackId
+    ? (tracks.find(t => t.id === liveSetEvent.incomingTrackId) || graphDisplayTracks[activeSetTrackIndex + 1] || null)
+    : null;
+
+  const deckATrack = liveDeckATrack || (activeTransition 
     ? (tracks.find(t => t.id === activeTransition.sourceTrackId) || null) 
-    : (graphDisplayTracks[0] || null);
-  const deckBTrack = activeTransition 
+    : (graphDisplayTracks[0] || null));
+
+  const deckBTrack = liveDeckBTrack || (activeTransition 
     ? (tracks.find(t => t.id === activeTransition.targetTrackId) || null) 
-    : (graphDisplayTracks[1] || null);
+    : (graphDisplayTracks[1] || null));
 
   // Multi-track DJ Set Playback State & Synchronizer
   const [setPlaybackTime, setSetPlaybackTime] = useState(0);
@@ -659,8 +692,15 @@ export default function App() {
 
   useEffect(() => {
     const unsub = globalDjSetEngine.onSetTimeUpdate((evt) => {
+      setLiveSetEvent(evt);
       setSetPlaybackTime(evt.setTimeSec);
-      setIsSetPlaying(evt.isPlaying);
+      setIsSetPlaying(prev => prev === evt.isPlaying ? prev : evt.isPlaying);
+      if (evt.activeTrackIndex !== undefined) {
+        setActiveSetTrackIndex(prev => prev === evt.activeTrackIndex ? prev : evt.activeTrackIndex);
+      }
+      if (evt.activeTransitionId) {
+        setActiveTransitionId(prev => prev === evt.activeTransitionId ? prev : evt.activeTransitionId);
+      }
     });
     return unsub;
   }, []);
@@ -762,32 +802,50 @@ export default function App() {
                   <button onClick={() => { setIsCreatingPlaylist(false); setNewPlaylistName(''); }} className="text-red-400"><X className="w-3 h-3" /></button>
                 </div>
               )}
-              {playlists.map(p => (
-                <div key={p.id} className="group flex items-center justify-between p-2 hover:bg-[#242936] rounded transition-colors cursor-pointer" onClick={() => loadPlaylist(p)}>
-                  {editingPlaylistId === p.id ? (
-                    <div className="flex items-center gap-2 w-full" onClick={e => e.stopPropagation()}>
-                      <input
-                        autoFocus
-                        type="text"
-                        value={newPlaylistName}
-                        onChange={e => setNewPlaylistName(e.target.value)}
-                        className="flex-1 bg-[#0D0E12] border border-[#242936] rounded px-1 text-xs text-white outline-none"
-                        onKeyDown={e => e.key === 'Enter' && handleSaveEditPlaylist(p.id)}
-                      />
-                      <button onClick={() => handleSaveEditPlaylist(p.id)} className="text-[#22C55E]"><Check className="w-3 h-3" /></button>
-                    </div>
-                  ) : (
-                    <>
-                      <span className="text-xs font-medium text-gray-300 group-hover:text-white">{p.name}</span>
-                      <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100" onClick={e => e.stopPropagation()}>
-                        <button onClick={() => { setEditingPlaylistId(p.id); setNewPlaylistName(p.name); }} className="text-gray-500 hover:text-white"><Edit2 className="w-3 h-3" /></button>
-                        <button onClick={() => handleDuplicatePlaylist(p)} className="text-gray-500 hover:text-white"><Copy className="w-3 h-3" /></button>
-                        <button onClick={() => handleDeletePlaylist(p.id)} className="text-gray-500 hover:text-red-400"><Trash2 className="w-3 h-3" /></button>
+              {playlists.map(p => {
+                const isSelected = selectedPlaylistId === p.id;
+                return (
+                  <div 
+                    key={p.id} 
+                    className={`group flex items-center justify-between p-2 rounded transition-all cursor-pointer ${
+                      isSelected 
+                        ? 'bg-cyan-500/15 border-l-2 border-cyan-400 text-cyan-300 shadow-sm' 
+                        : 'hover:bg-[#242936] text-gray-300'
+                    }`} 
+                    onClick={() => loadPlaylist(p)}
+                  >
+                    {editingPlaylistId === p.id ? (
+                      <div className="flex items-center gap-2 w-full" onClick={e => e.stopPropagation()}>
+                        <input
+                          autoFocus
+                          type="text"
+                          value={newPlaylistName}
+                          onChange={e => setNewPlaylistName(e.target.value)}
+                          className="flex-1 bg-[#0D0E12] border border-[#242936] rounded px-1 text-xs text-white outline-none"
+                          onKeyDown={e => e.key === 'Enter' && handleSaveEditPlaylist(p.id)}
+                        />
+                        <button onClick={() => handleSaveEditPlaylist(p.id)} className="text-[#22C55E]"><Check className="w-3 h-3" /></button>
                       </div>
-                    </>
-                  )}
-                </div>
-              ))}
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`text-xs font-medium truncate ${isSelected ? 'text-white font-bold' : 'text-gray-300 group-hover:text-white'}`}>
+                            {p.name}
+                          </span>
+                          <span className="text-[9px] font-mono px-1 py-0.2 bg-[#0D0E12] border border-[#242936] rounded text-gray-500">
+                            {p.trackIds?.length || 0}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100" onClick={e => e.stopPropagation()}>
+                          <button onClick={() => { setEditingPlaylistId(p.id); setNewPlaylistName(p.name); }} className="text-gray-500 hover:text-white" title="Umbenennen"><Edit2 className="w-3 h-3" /></button>
+                          <button onClick={() => handleDuplicatePlaylist(p)} className="text-gray-500 hover:text-white" title="Duplizieren"><Copy className="w-3 h-3" /></button>
+                          <button onClick={() => handleDeletePlaylist(p.id)} className="text-gray-500 hover:text-red-400" title="Löschen"><Trash2 className="w-3 h-3" /></button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -1215,6 +1273,8 @@ export default function App() {
               onTogglePlay={handleSetTogglePlay}
               onAutomix={handleAutomix}
               onTrackUpdated={(updated) => updateTrack(updated.id, updated)}
+              onOpenSetExport={() => setIsSetExportModalOpen(true)}
+              onSaveSetAsPlaylist={() => handleSaveSetAsPlaylist(`Set Playlist ${new Date().toLocaleDateString('de-DE')}`)}
             />
           )}
         </div>
@@ -1229,6 +1289,8 @@ export default function App() {
         onPlayTrack={setCurrentTrack}
         isOpen={isSetPlaylistOpen}
         onToggleOpen={setIsSetPlaylistOpen}
+        onOpenSetExport={() => setIsSetExportModalOpen(true)}
+        onSaveAsPlaylist={(name) => handleSaveSetAsPlaylist(name)}
       />
 
       </div>
@@ -1242,6 +1304,21 @@ export default function App() {
           isPlayingGlobal={isPlaying}
         />
       )}
+
+      {/* MuLiMa Pro DJ SET EXPORT MODAL */}
+      <SetExportModal
+        isOpen={isSetExportModalOpen}
+        onClose={() => setIsSetExportModalOpen(false)}
+        tracks={graphDisplayTracks}
+        transitions={setTransitions}
+        onSaveAsPlaylist={(name) => handleSaveSetAsPlaylist(name)}
+        onImportProject={(importedTracks, importedTransitions) => {
+          setPlaylist(importedTracks as Track[]);
+          if (importedTransitions && importedTransitions.length > 0) {
+            setSetTransitions(importedTransitions);
+          }
+        }}
+      />
 
       {/* MuLiMa Pro LIBRARY MANAGER MODAL */}
       <LibraryManagerModal 
@@ -1291,6 +1368,9 @@ export default function App() {
           onSelectTransition={(t) => setActiveTransitionId(t.id)}
           onOpenTrackAnalysis={(t) => setActiveTrackForAnalysis(t)}
           onTrackUpdated={(updated) => updateTrack(updated.id, updated)}
+          liveSetEvent={liveSetEvent}
+          onOpenSetExport={() => setIsSetExportModalOpen(true)}
+          onSaveSetAsPlaylist={() => handleSaveSetAsPlaylist(`Set Playlist ${new Date().toLocaleDateString('de-DE')}`)}
         />
       ) : (
         <div className="fixed bottom-0 left-0 right-0 h-20 bg-[#161920] border-t border-[#242936] px-6 flex items-center justify-between z-50 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">

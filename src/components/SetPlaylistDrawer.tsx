@@ -15,7 +15,8 @@ import {
   Clock, 
   Activity, 
   Sparkles,
-  AlertCircle
+  AlertCircle,
+  Bookmark
 } from 'lucide-react';
 import { TrackDef } from '../types';
 
@@ -28,6 +29,8 @@ interface SetPlaylistDrawerProps {
   isOpen?: boolean;
   onToggleOpen?: (isOpen: boolean) => void;
   className?: string;
+  onOpenSetExport?: () => void;
+  onSaveAsPlaylist?: (name: string) => void;
 }
 
 // Camelot harmonic relationship evaluation
@@ -104,6 +107,8 @@ export default function SetPlaylistDrawer({
   isOpen: controlledIsOpen,
   onToggleOpen,
   className = '',
+  onOpenSetExport,
+  onSaveAsPlaylist,
 }: SetPlaylistDrawerProps) {
   const [internalIsOpen, setInternalIsOpen] = useState<boolean>(false);
   const [copiedTracklist, setCopiedTracklist] = useState<boolean>(false);
@@ -328,6 +333,32 @@ export default function SetPlaylistDrawer({
               <Download className="w-3 h-3 text-[#06B6D4]" />
               <span>M3U</span>
             </button>
+
+            {onOpenSetExport && (
+              <button
+                id="btn-drawer-open-export"
+                onClick={onOpenSetExport}
+                disabled={playlist.length === 0}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-[#0D0E12] hover:bg-[#242936] text-cyan-300 hover:text-white border border-cyan-500/40 disabled:opacity-40 transition-colors"
+                title="CUE Sheet, M3U8 und Projekt-Export öffnen"
+              >
+                <Download className="w-3 h-3 text-cyan-400" />
+                <span>Export</span>
+              </button>
+            )}
+
+            {onSaveAsPlaylist && (
+              <button
+                id="btn-drawer-save-playlist"
+                onClick={() => onSaveAsPlaylist(`DJ Set Playlist ${new Date().toLocaleDateString('de-DE')}`)}
+                disabled={playlist.length === 0}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-[#0D0E12] hover:bg-[#242936] text-purple-300 hover:text-white border border-purple-500/40 disabled:opacity-40 transition-colors"
+                title="In linker Sidebar als Playlist ablegen"
+              >
+                <Bookmark className="w-3 h-3 text-purple-400" />
+                <span>Speichern</span>
+              </button>
+            )}
 
             <button
               onClick={handleCopyTracklist}

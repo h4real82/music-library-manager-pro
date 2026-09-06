@@ -24,6 +24,8 @@ interface GraphMapProps {
   onTogglePlay?: () => void;
   onAutomix?: (orderedTracks: Track[], newTransitions: TransitionConfig[]) => void;
   onTrackUpdated?: (track: Track) => void;
+  onOpenSetExport?: () => void;
+  onSaveSetAsPlaylist?: () => void;
 }
 
 interface Point {
@@ -73,6 +75,8 @@ export default function GraphMap({
   onTogglePlay,
   onAutomix,
   onTrackUpdated,
+  onOpenSetExport,
+  onSaveSetAsPlaylist,
 }: GraphMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -538,6 +542,8 @@ export default function GraphMap({
             }}
             onOpenTrackAnalysis={onAnalyze}
             onTrackUpdated={onTrackUpdated}
+            onOpenSetExport={onOpenSetExport}
+            onSaveSetAsPlaylist={onSaveSetAsPlaylist}
           />
         </div>
       ) : (

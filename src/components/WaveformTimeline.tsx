@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Play, Pause, RotateCcw, Sliders, Zap, Waves, Scissors, Gauge, Clock, Music, ZoomIn, ZoomOut, Maximize2, Sparkles, ChevronRight, Wand2, Activity, MoveHorizontal, GripVertical } from 'lucide-react';
+import { Play, Pause, RotateCcw, Sliders, Zap, Waves, Scissors, Gauge, Clock, Music, ZoomIn, ZoomOut, Maximize2, Sparkles, ChevronRight, Wand2, Activity, MoveHorizontal, GripVertical, Download, Bookmark } from 'lucide-react';
 import { TrackDef, TransitionConfig, TransitionPresetType } from '../types';
 import { evaluateKeyCompatibility, calculateTempoSync, evaluateEnvelope, generateHarmonizedSet, generateDefaultEnvelopes } from '../lib/djMixerLogic';
 import { PRESET_META } from './DjSetPlayer';
@@ -19,6 +19,8 @@ interface WaveformTimelineProps {
   onAutomix?: (orderedTracks: TrackDef[], newTransitions: TransitionConfig[]) => void;
   onTransitionsChange?: (transitions: TransitionConfig[]) => void;
   onTrackUpdated?: (track: TrackDef) => void;
+  onOpenSetExport?: () => void;
+  onSaveSetAsPlaylist?: () => void;
 }
 
 const TIMELINE_HEADER_WIDTH = 256; // Left sticky track info header width
@@ -62,6 +64,8 @@ export default function WaveformTimeline({
   onAutomix,
   onTransitionsChange,
   onTrackUpdated,
+  onOpenSetExport,
+  onSaveSetAsPlaylist,
 }: WaveformTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(1.0); // 0.4x to 2.5x
@@ -353,6 +357,30 @@ export default function WaveformTimeline({
             >
               <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-spin" />
               <span>Harmonize (Automix)</span>
+            </button>
+          )}
+
+          {onOpenSetExport && (
+            <button
+              id="btn-waveform-export-set"
+              onClick={onOpenSetExport}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-[#161920] hover:bg-[#242936] text-cyan-300 hover:text-white text-xs font-mono font-bold border border-cyan-500/40 shadow-md transition-all hover:scale-105 active:scale-95"
+              title="DJ Set exportieren (CUE Sheet, M3U8 Playlist, Projekt-Datei)"
+            >
+              <Download className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Export</span>
+            </button>
+          )}
+
+          {onSaveSetAsPlaylist && (
+            <button
+              id="btn-waveform-save-playlist"
+              onClick={onSaveSetAsPlaylist}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-[#161920] hover:bg-[#242936] text-purple-300 hover:text-white text-xs font-mono font-bold border border-purple-500/40 shadow-md transition-all hover:scale-105 active:scale-95"
+              title="Set direkt als Playlist in der linken Sidebar ablegen"
+            >
+              <Bookmark className="w-3.5 h-3.5 text-purple-400" />
+              <span>Speichern</span>
             </button>
           )}
 
