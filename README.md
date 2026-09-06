@@ -125,97 +125,190 @@ npx gh-pages -d dist
 
 ## 🎛️ Walkthrough: Alle Funktionen im Überblick
 
-MuLiMa Pro vereint die Bibliotheksverwaltung von Rekordbox/Traktor mit der visuellen Mehrspur-Bearbeitung von Mixmeister und DJ.Studio.
+MuLiMa Pro vereint die Bibliotheksverwaltung von Rekordbox/Traktor mit der visuellen Mehrspur-Bearbeitung von Mixmeister und DJ.Studio. Nachfolgend findest du einen detaillierten Rundgang durch alle Hauptmodule der App.
 
-### 1. Musik-Bibliothek & Intelligente Kuration
-- **4 Ansichtsmodi**:
-  - 🎴 **Cover View**: Große Vinyl-Cover-Karten mit direkter CUE- und BPM-Übersicht.
-  - 📋 **List View**: Schnelle DJ-Tabelle mit **benutzerdefinierten Spalten** (Cover, Titel, Album, BPM, Key, Energy, Genre, Dauer, Aktionen nach Belieben ein-/ausblendbar).
-  - 🌌 **Scatter Plot**: 2D-Energiediagramm nach BPM und Energy-Level.
-  - 🕸️ **Graph Map**: Die interaktive Set-Baufläche.
-- **Camelot Harmonic Wheel (1A – 12B)**:
-  - Harmonische Tonarterkennung für fehlerfreies Key-Mixing (Perfect Match, +1/-1 Energy Shift, Relative Dur/Moll).
+---
+
+### 1. Track Mapper Matrix (2D-Harmonie- & BPM-Raster)
+Die **Track Mapper Matrix** ordnet alle Tracks der Musiksammlung als interaktive Punkte in einem zweidimensionalen Koordinatenraster an, um musikalisch zusammenpassende Tracks auf einen Blick zu erkennen:
+
+- **Frei konfigurierbare X- und Y-Achsen**:
+  - **Optionen**: `Key (Camelot Tonart)`, `BPM (Tempo)`, `Energy (1 - 10)`, `Mood (Stimmung)`, `Genre (Stilrichtung)`.
+  - **Gegenseitiger Ausschluss (Mutual Exclusivity)**: X und Y können niemals dieselbe Eigenschaft belegen. Wählt man auf einer Achse den Wert der anderen, tauschen sie automatisch die Plätze.
+  - **Achsen-Tausch-Button (`⇄`)**: Ein Klick tauscht die Dimensionen sofort um.
+- **Stufenlose Zoom- & Pan-Engine (Entzerrung dichter Cluster)**:
+  - **Cursor-zentrierter Mausrad-Zoom (0.8x bis 5.0x)**: Hinein- und Herauszoomen direkt auf den Mauszeiger fokussiert.
+  - **Toolbar-Steuerung**: `[-]`, `[+]` sowie Prozentanzeige mit **1-Klick-Reset auf `100%`**.
+  - **Verschieben (Pan)**: Umschaltbarer Werkzeugmodus (`[🎯 Lasso]` vs. `[✋ Pan]`) oder flexibel per **Rechtsklick-Ziehen**, **Mittelklick-Ziehen** oder **Leertaste + Ziehen**.
+  - **Inverse Punkt-Skalierung**: Punkte weichen beim Zoom physikalisch auseinander, bleiben aber nadelfein und gestochen scharf.
+- **Maus-Lasso / Einkreisen & Floating Bulk HUD**:
+  - Ziehe mit der Maus eine beliebige Form um mehrere Punkte, um sie einzukreisen.
+  - Eingekreiste Tracks leuchten mit smaragdgrünem Neon-Ring auf.
+  - Das schwebende **Bulk Action HUD** bietet Sofortaktionen:
+    - **`+ Zur Playlist hinzufügen`**: Übernimmt alle markierten Tracks direkt in das aktuelle DJ-Set.
+    - **`▶ Abspielen`**: Spielt den ersten Track der Auswahl sofort an.
+    - **`✕ Aufheben`** (oder `Esc`): Löscht die Markierung.
+- **Interaktive Hover-Cards & Farb-Modi**:
+  - Überfahren eines Punktes zeigt eine detailreiche Tooltip-Karte mit Cover, Titel, Artist, Key-Badge, BPM, Energy und Stilrichtung.
+  - Umschaltbare Punktfarben nach **Camelot Key**, **Energy-Level (1-10)** oder **Genre**.
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_mapper_bpm_energy.png" alt="Track Mapper Matrix: BPM vs Energy" width="90%" />
+  <p><em>Track Mapper Matrix: BPM vs. Energy mit Camelot-Farben</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_mapper_zoomed_in.png" alt="Track Mapper Zoom: Entzerrte Cluster bei 169%" width="90%" />
+  <p><em>Stufenloser Zoom (169%): Dichte Cluster entzerren sich in gut klickbare Einzeltracks</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_mapper_zoomed_lasso.png" alt="Track Mapper: Zoomed Lasso Selection mit Bulk Action HUD" width="90%" />
+  <p><em>Maus-Lasso-Einkreisen: 43 ausgewählte Tracks mit Neon-Glow und schwebendem Playlist-Aktions-HUD</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_mapper_zoomed_tooltip.png" alt="Track Mapper: Detail-Hover-Card im Zoom" width="90%" />
+  <p><em>Akkurate Hover-Card: Dynamische Anzeige aller Track-Parameter ohne Verzerrung</em></p>
+</div>
+
+---
+
+### 2. Musik-Bibliothek: List View & Kuration
+Die Bibliotheksansichten bieten maximale Übersicht für umfangreiche Musiksammlungen:
+
+- **Getrennte, voll sortierbare Spalten**:
+  - **Interpret & Titel**: Sauber in zwei Spalten separiert mit A–Z und Z–A Sortierung per Klick auf die Kopfzeile.
+  - **BPM & Energy**: Schnelle Sortierung nach Geschwindigkeit oder Intensität.
+  - **Genre & Mood**: Getrennt voneinander filter- und sortierbar.
+- **Camelot Wheel Harmonische Farben**:
+  - Jede Tonart erstrahlt in der exakten Farbe des Camelot-Rads (z. B. 8A = Dunkelrot, 9A = Magenta, 11A = Cyan, etc.).
+- **10-stufige Energy-Badges**:
+  - Farbverlauf von Chilled (1/10) bis Peaktime (10/10) identisch mit den Filtern in der linken Seitenleiste.
+- **Spalten-Konfigurator**:
+  - Über das Zahnrad-Symbol können beliebige Spalten (Cover, Titel, Interpret, Album, BPM, Key, Energy, Genre, Mood, Dauer, Aktionen) individuell ein- oder ausgeblendet werden.
 - **Intelligente Duplikate-Bereinigung**:
-  - Erkennt Dubletten anhand von Dateipfaden, ID3-Signaturen und Bitraten und bereinigt diese mit einem Klick.
-- **DJ-Filter**:
-  - Filter nach BPM-Bereichen, Genres, Stimmungen oder Stilen (Warmup, Peaktime, Minimal, Psy Trance, Afterhour).
+  - Findet Dubletten anhand von ID3-Tags, Bitraten und Audio-Signaturen und entfernt diese sicher.
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_list_view_separated_sorted.png" alt="List View: Getrennte Spalten und Camelot-Sortierung" width="90%" />
+  <p><em>DJ List View: Getrennte Spalten für Interpret/Titel, BPM-Sortierung und harmonische Camelot-Farben</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_column_customizer.png" alt="List View: Spalten-Konfigurator" width="90%" />
+  <p><em>Spalten-Konfigurator: Benutzerdefinierte Tabellenansicht mit flexibler Sichtbarkeit</em></p>
+</div>
 
 ---
 
-### 2. Track-Analyse & Precision Deck Studio
-Klicke bei einem Track auf **"Studio"**, um in das Analyse-Deck zu wechseln:
-- **720-Slice Fluid Waveform**: Hochauflösende, frequenzgetrennte Wellenform (Bässe, Mitten, Höhen farblich differenziert).
+### 3. Track-Analyse & Precision Deck Studio
+Klicke bei einem beliebigen Track auf **"Studio"**, um in das professionelle Analyse- und Vorbereitungsdeck zu wechseln:
+
+- **720-Slice Fluid Waveform**:
+  - Dreifarbig differenzierte Frequenzbänder (Rot = Bass, Grün = Mitten, Blau = Höhen).
 - **Hot-Cue Slots (1 – 5)**:
-  - Slot 1: *Intro Mix In*
-  - Slot 2: *Bass Entry*
-  - Slot 3: *Main Drop*
-  - Slot 4: *Peak Drop*
-  - Slot 5: *Outro Mix Out*
+  - Definierte Einsprungpunkte: *Intro Mix In*, *Bass Entry*, *Main Drop*, *Peak Drop*, *Outro Mix Out*.
 - **Dynamische Loop-Slots**:
-  - Setze beliebige Takt-Loops (1, 2, 4, 8, 16, 32 Beats).
-  - Ein gespeicherter Loop ordnet sich automatisch chronologisch an die richtige Position in der Track-Struktur ein; nachfolgende Cues rücken auf.
-- **3-Band Spektrum Visualizer**: Echzeit-Pegelanzeige für Bässe, Mitten und Höhen während der Wiedergabe.
-- **DSP EQ-Rack**:
-  - 3-Band Equalizer mit Kill-Switches für Low, Mid und High.
+  - Setze Live-Loops mit 1, 2, 4, 8, 16 oder 32 Beats. Gespeicherte Loops ordnen sich automatisch chronologisch in die Track-Struktur ein.
+- **3-Band Spektrum Visualizer & DSP EQ-Rack**:
+  - Bouncing Pegelanzeige mit 3-Band Equalizer und Kill-Switches für Bässe, Mitten und Höhen.
 - **Online-Portale**:
-  - Direkte Verknüpfungen zu Beatport, Discogs, Traxsource und Spotify zum Abgleich von Track-Informationen.
+  - Direkte 1-Klick-Recherche auf Beatport, Discogs, Traxsource und Spotify.
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_precision_deck_studio.png" alt="Precision Deck Studio mit 720-Slice Waveform und EQ-Rack" width="90%" />
+  <p><em>Precision Deck Studio: 720-Slice Wellenform, CUE-Slots, DSP EQ-Rack und Spektrum-Visualizer</em></p>
+</div>
 
 ---
 
-### 3. DJ Graph Map (Node Graph)
-In der Graph-Map-Ansicht baust du dein Set visuell als Netzwerk zusammen:
-- **2D-Canvas mit Zoom & Pan**:
-  - Stufenloses Zoomen (Mausrad oder Toolbar-Buttons) und Verschieben der Arbeitsfläche.
-- **Track-Knoten mit Ein- und Ausgangs-Ports**:
-  - Jeder CUE- und Loop-Slot besitzt einen Connector-Punkt.
-- **Stabiles Slot-Verbinden**:
-  - **Click-to-Connect**: Klicke auf den rechten Ausgangs-Port von Slot A (z. B. *Outro Mix Out*); der Verbindungsmodus aktiviert sich und gültige Ziel-Slots pulsieren grün. Ein Klick auf Slot B (z. B. *Intro Mix In*) stellt die Verbindung her.
-  - **Drag-and-Drop**: Ziehe eine Verbindungslinie mit der Maus direkt von Port zu Port.
+### 4. DJ Graph Map (Visuelles Node-Netzwerk)
+Erstelle dein DJ-Set als interaktives visuelles Netzwerk:
+
+- **2D-Netzwerk-Canvas mit Zoom & Pan**:
+  - Frei verschiebbare Track-Knoten mit Ein- und Ausgangs-Ports für jeden CUE- und Loop-Slot.
+- **Stabiles Verbinden (Click-to-Connect & Drag-and-Drop)**:
+  - Klicke auf den Ausgangs-Port von Track A; kompatible Ziel-Ports an Track B pulsieren grün. Ein Klick auf Track B stellt die Verbindung her.
 - **5 Techno-Übergangstechniken als Presets**:
-  1. 🎚️ **EQ-Wechsel (Equalizer Blend)**: Frequenzbänder beider Tracks werden über 32/64 Beats gegeneinander ausgespielt.
-  2. ⚡ **Bass-Swap (Instant Low-End Switch)**: Tauscht die Bässe schlagartig exakt auf dem ersten Beat ("auf die Eins") der neuen Phrase aus (0-50ms Antiklick-Rampe).
-  3. 🌊 **Filter-Sweep (HPF Transition)**: High-Pass Filter fährt von 20 Hz auf 2000 Hz hoch und lässt Track A dramatisch ausdünnen, bevor Track B droppt.
-  4. ✂️ **Cut / Drop (Fader Slam)**: Abrupter Wechsel ohne Überlappung bei Breaks.
-  5. 📈 **Gain Crossfade (Equal-Power)**: Sinus/Cosinus-Lautstärkekurve für konstanten Schalldruck ohne Pegel-Einbruch in der Mitte.
+  1. 🎚️ **EQ-Wechsel (Equalizer Blend)**: Gleichmäßiger Frequenztausch über 32/64 Beats.
+  2. ⚡ **Bass-Swap (Instant Low-End Switch)**: Schlagartiger Tausch des Bassbereichs exakt auf dem ersten Beat ("auf die Eins").
+  3. 🌊 **Filter-Sweep (HPF Transition)**: Resonanter High-Pass-Filter fährt hoch und dünnt Track A dramatisch aus.
+  4. ✂️ **Cut / Drop (Fader Slam)**: Abrupter Wechsel ohne Überlappung bei Drops.
+  5. 📈 **Gain Crossfade (Equal-Power)**: Konstanter Schalldruck über die gesamte Überblendung.
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_node_graph_connected.png" alt="DJ Graph Map Node Netzwerk" width="90%" />
+  <p><em>DJ Graph Map: Verbundenes Set-Netzwerk mit konfigurierbaren Techno-Übergangskurven</em></p>
+</div>
 
 ---
 
-### 4. Waveform Timeline Studio (Mehrspur-Zeitleiste)
-Schalte oben rechts auf **"Waveform Timeline"** um:
-- **Mehrspurige DJ-Zeitleiste**:
-  - Alle Tracks des Sets werden untereinander als Spuren auf einer globalen Zeit- und Taktleiste dargestellt.
-- **Horizontales Verschieben (Wellenform packen)**:
-  - Packe eine Wellenform mit der Maus und ziehe sie nach links oder rechts.
-  - **Stationärer Übergangsrahmen**: Der Rahmen des Übergangs bleibt **fest an Track A verankert**. Track B gleitet horizontal unter dem Übergangsfenster hindurch!
-  - **Takt-Raster Einrastung (Beatgrid Snap)**: Beim Loslassen rastet Track B automatisch am 4-Takt-Raster (Bars) relativ zu Track A ein. Beide Tracks laufen nach dem Verschieben absolut synchron im Takt! *(Halte Shift für 1-Beat-Schritte)*.
-- **Gemeinsamer Übergangsrahmen über beide Spuren**:
-  - Der Leucht-Rahmen umrandet Track A und Track B am Übergangsbereich.
-  - Eingeblendete **3-Band EQ-Hüllkurven**:
-    - 🟠 **Orange**: Tief / Bass
-    - 🟡 **Gelb**: Mitten
-    - 🔵 **Cyan**: Höhen
+### 5. Waveform Timeline Studio (Mehrspur-Zeitleiste)
+Die Mehrspur-Zeitleiste erlaubt das zentimetergenaue Arrangieren von Übergängen:
+
+- **Horizontales Verschieben mit Beatgrid-Snap**:
+  - Packe eine Wellenform und bewege sie horizontal. Track B rastet automatisch im 4-Takt-Raster relativ zu Track A ein.
+- **Stationärer Übergangsrahmen & `[▶ Cue Mix]`**:
+  - Der Übergangsrahmen bleibt am Ausgangspunkt von Track A verankert, während Track B darunter gleitet.
+  - Der `[▶ Cue Mix]`-Button springt sofort an den Startpunkt des Übergangs für ein schnelles Probehören.
 - **Waveform Transition Overlap Studio**:
-  - Klicke auf den Button **"Hüllkurven"** am Übergangsrahmen, um ein Vollbild-Studio zu öffnen: Passe Kontrollpunkte der Frequenzen mit der Maus an und teste den Übergang mit dem integrierten Probehör-Player.
+  - Klicke auf **"Hüllkurven"**, um die 3-Band EQ-Kurven (Bass = Orange, Mitten = Gelb, Höhen = Cyan) mit Kontrollpunkten punktgenau zu modellieren.
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_waveform_timeline_transition_cue.png" alt="Waveform Timeline Studio mit Cue Mix" width="90%" />
+  <p><em>Waveform Timeline Studio: Übergangsrahmen mit Hüllkurven und Cue Mix Button</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_waveform_overlap_studio_verified.png" alt="Waveform Overlap Studio" width="90%" />
+  <p><em>Transition Overlap Studio: Detail-Bearbeitung von Frequenzkurven und Lautstärken</em></p>
+</div>
 
 ---
 
-### 5. Taktgitter- & Phasen-Reparatur Studio
-Falls Lieder mal nicht zu 100% synchron laufen oder das Taktgitter verschoben ist:
-- Klicke auf den Button **"Gitter"** in der Zeitleiste oder im Player:
-- **Phase Nudge**: Buttons für `±10 ms`, `±1/4 Beat` und `±1 Beat`.
-- **Takt-Eins Neuausrichtung**: Setzt den ersten Schlag des Rasters exakt an die aktuelle Playhead-Position.
-- **Auto Phase-Lock**: Synchronisiert die Phase von Deck B automatisch mit Deck A.
-- **BPM-Korrektur**: Feintuning in `0.1`-Schritten, Halftime (`/2`) und Doubletime (`x2`).
-- **Akustisches Metronom**: Integrierter Klick-Generator zum hörbaren Abgleich mit dem Beat.
+### 6. Taktgitter- & Phasen-Reparatur Studio
+Behebt asynchrone Takte und unsaubere Phasen im Handumdrehen:
+
+- **Phase Nudge**: Manuelle Phasenverschiebung um `±10 ms`, `±1/4 Beat` oder `±1 Beat`.
+- **Auto Phase-Lock**: Synchronisiert die Phase von Deck B vollautomatisch mit Deck A.
+- **Takt-Eins Neuausrichtung**: Setzt den Downbeat exakt an die aktuelle Nadelposition.
+- **Akustisches Metronom**: Integrierter Klick-Generator zum hörbaren Takt-Abgleich.
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_beatgrid_repair_modal.png" alt="Taktgitter Reparatur Studio" width="90%" />
+  <p><em>Taktgitter- und Phasen-Reparatur: Phasenkorrektur, Auto-Lock und akustisches Metronom</em></p>
+</div>
 
 ---
 
-### 6. DJ Set Player & M3U-Export
-- **Globaler Set Player** am unteren Bildschirmrand:
-  - Steuert Deck A und Deck B synchron.
-  - Automatischer Crossfader fährt während des Übergangs nach den definierten Kurven.
-  - **Phase Sync** Button gleicht Phasenunterschiede live an.
-  - **M3U Export**: Exportiere das fertige Set mit einem Klick als M3U-Playliste für USB-Sticks, Pioneer CDJs oder DJ-Software.
+### 7. Globaler DJ-Set Player & Playlist-Verwaltung
+Der fest verankerte DJ-Player am unteren Bildschirmrand bietet volle Live-Kontrolle:
+
+- **Live `● ON AIR` Status-Symbolik**:
+  - Pulsierender `● ON AIR`-Badge und leuchtender Cover-Rahmen auf dem aktuell aktiven Deck.
+  - Animierter Mini-Equalizer über dem Cover.
+  - Inaktives Deck zeigt übersichtlich `STANDBY`.
+- **Vollständig entzerrte Bedienelemente**:
+  - Alle Buttons (`Play/Pause`, `Deck A Solo`, `Deck B Solo`, `Set Export`, `Playlist Speichern`) und Fader sind mit 16 px Bodenfreiheit vollständig sichtbar und unbeschnitten.
+  - Der Crossfader und die Hoch-, Mitten- und Tiefen-Fader bewegen sich synchron zur Wiedergabeposition und den Übergangskurven.
+- **Persistente Playlisten & M3U-Export**:
+  - Speichere arrangierte Sets in der Playlisten-Verwaltung und exportiere sie als M3U-Dateien für Rekordbox, Traktor oder USB-Sticks für Pioneer CDJs.
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_bottom_player_uncut_with_on_air.png" alt="Unbeschnittener DJ Player mit ON AIR Status" width="90%" />
+  <p><em>Globaler DJ-Set Player: Live ON AIR Status, synchrone 3-Band EQ Fader, Crossfader und unbeschnittene Buttons</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_djset_export_modal.png" alt="DJ Set M3U Export Modal" width="90%" />
+  <p><em>DJ Set Export: Export von Playlisten und Metadaten als universelle M3U-Datei</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_playlist_persistence.png" alt="Playlist-Verwaltung und Speicherung" width="90%" />
+  <p><em>Playlist-Verwaltung: Dauerhafte Speicherung und Verwaltung beliebig vieler Sets</em></p>
+</div>
 
 ---
 
@@ -231,3 +324,4 @@ Falls Lieder mal nicht zu 100% synchron laufen oder das Taktgitter verschoben is
 
 ## 📄 Lizenz
 MIT License — Frei verwendbar für private und professionelle DJ-Sets.
+
