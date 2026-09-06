@@ -1,5 +1,5 @@
 {
-  "name": "Djoid - KI Musik-Kuration",
+  "name": "MuLiMa Pro - KI Musik-Kuration",
   "description": "Ein hochentwickeltes Musik-Kurations-Tool für DJs zur Analyse von Metadaten und Set-Building basierend auf harmonischem Mixing und Energiefluss.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

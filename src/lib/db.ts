@@ -1,6 +1,6 @@
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
 
-interface DjoidDB extends DBSchema {
+interface MulimaDB extends DBSchema {
   tracks: {
     key: string;
     value: any;
@@ -15,11 +15,13 @@ interface DjoidDB extends DBSchema {
   };
 }
 
-let dbPromise: Promise<IDBPDatabase<DjoidDB>> | null = null;
+export type DjoidDB = MulimaDB;
+
+let dbPromise: Promise<IDBPDatabase<MulimaDB>> | null = null;
 
 export function getDB() {
   if (!dbPromise) {
-    dbPromise = openDB<DjoidDB>('DjoidLocalLibrary', 3, {
+    dbPromise = openDB<MulimaDB>('MulimaLocalLibrary', 3, {
       upgrade(db, oldVersion, newVersion, transaction) {
         if (!db.objectStoreNames.contains('tracks')) {
           db.createObjectStore('tracks', { keyPath: 'id' });

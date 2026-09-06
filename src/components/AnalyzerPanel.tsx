@@ -458,7 +458,7 @@ ${cueXml}
             )}
           </button>
           <button onClick={exportNml} className="flex items-center gap-2 bg-[#242936] hover:bg-[#A855F7] text-white px-4 py-2 rounded font-bold text-sm transition-colors shadow-sm border border-[#333a4d]">
-            <Download className="w-4 h-4" /> Export to Traktor (.nml)
+            <Download className="w-4 h-4" /> Export DJ NML (.nml)
           </button>
           <button onClick={onClose} className="p-2 text-gray-500 hover:text-white bg-[#0D0E12] border border-[#242936] hover:border-gray-500 rounded-full transition-colors">
             <X className="w-5 h-5" />

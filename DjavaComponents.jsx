@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 const audioInstance = typeof window !== 'undefined' ? new Audio() : null;
 if (audioInstance) audioInstance.volume = 0.9;
 
-export function DjoidDashboard({ tracks, setTracks }) {
+export function MulimaDashboard({ tracks, setTracks }) {
   // 2. STATES FÜR GRUPPEN & FILTER
   const [groups, setGroups] = useState(['Warmup', 'Peaktime', 'Afterhour']);
   const [newGroupName, setNewGroupName] = useState('');

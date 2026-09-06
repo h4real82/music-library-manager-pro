@@ -21,23 +21,38 @@ import {
   Sparkles,
   Loader2,
   RefreshCw,
-  FileAudio
+  FileAudio,
+  CheckCircle2,
+  AlertCircle,
+  Activity,
+  ShieldCheck,
+  CopyCheck
 } from 'lucide-react';
-import { TrackDef, DjoidGroup } from '../types';
-import { extractMetadata } from '../lib/audioMetadata';
+import { TrackDef, MulimaGroup, DuplicateGroup, DuplicateCandidate } from '../types';
+import { extractMetadata, getAudioDuration } from '../lib/audioMetadata';
+import { analyzeTrackSegments } from '../lib/audioAnalysis';
+import { deepAudioAnalyze } from '../lib/deepAudioAnalysis';
 
 interface LibraryManagerModalProps {
   isOpen: boolean;
   onClose: () => void;
   tracks: TrackDef[];
-  groups: DjoidGroup[];
+  groups: MulimaGroup[];
   onRefreshTracks: () => Promise<void>;
   onTrackDeleted: (filePath: string) => void;
   onTrackUpdated: (filePath: string, updates: Partial<TrackDef>) => void;
-  onGroupsUpdated: (groups: DjoidGroup[]) => void;
+  onGroupsUpdated: (groups: MulimaGroup[]) => void;
   currentPlayingTrack: TrackDef | null;
   isPlaying: boolean;
   onPlayTrack: (track: TrackDef) => void;
+  onClearLibrary?: () => Promise<void>;
+  onOpenAnalysisTrack?: (track: TrackDef) => void;
+  initialTab?: 'tracks' | 'import' | 'groups' | 'organize';
+}
+
+interface UploadItem {
+  file: File;
+  subfolder?: string;
 }
 
 const PRESET_COLORS = [
@@ -71,6 +86,62 @@ const PRESET_STYLES = [
   'Ambient'
 ];
 
+/**
+ * Recursively scans dragged folders/files using webkitGetAsEntry
+ */
+const scanDroppedItems = async (items: DataTransferItemList | DataTransferItem[]): Promise<UploadItem[]> => {
+  const results: UploadItem[] = [];
+
+  const traverseEntry = async (entry: any, currentPath: string = '') => {
+    if (!entry) return;
+    if (entry.isFile) {
+      await new Promise<void>((resolve) => {
+        entry.file((file: File) => {
+          if (/\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(file.name)) {
+            results.push({ file, subfolder: currentPath || undefined });
+          }
+          resolve();
+        }, () => resolve());
+      });
+    } else if (entry.isDirectory) {
+      const dirReader = entry.createReader();
+      const readBatch = (): Promise<any[]> => new Promise((resolve) => {
+        dirReader.readEntries((entries: any[]) => resolve(entries), () => resolve([]));
+      });
+      let allEntries: any[] = [];
+      let batch: any[] = [];
+      do {
+        batch = await readBatch();
+        allEntries = allEntries.concat(batch);
+      } while (batch.length > 0);
+
+      const nextPath = currentPath ? `${currentPath}/${entry.name}` : entry.name;
+      for (const child of allEntries) {
+        await traverseEntry(child, nextPath);
+      }
+    }
+  };
+
+  const promises: Promise<void>[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (typeof (item as any).webkitGetAsEntry === 'function') {
+      const entry = (item as any).webkitGetAsEntry();
+      if (entry) {
+        promises.push(traverseEntry(entry));
+        continue;
+      }
+    }
+    const file = item.getAsFile ? item.getAsFile() : null;
+    if (file && /\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(file.name)) {
+      results.push({ file });
+    }
+  }
+
+  await Promise.all(promises);
+  return results;
+};
+
 export default function LibraryManagerModal({
   isOpen,
   onClose,
@@ -82,12 +153,27 @@ export default function LibraryManagerModal({
   onGroupsUpdated,
   currentPlayingTrack,
   isPlaying,
-  onPlayTrack
+  onPlayTrack,
+  onClearLibrary,
+  onOpenAnalysisTrack,
+  initialTab
 }: LibraryManagerModalProps) {
   if (!isOpen) return null;
 
   // Active Tab / Sub-views
-  const [activeTab, setActiveTab] = useState<'tracks' | 'import' | 'groups' | 'organize'>('tracks');
+  const [activeTab, setActiveTab] = useState<'tracks' | 'import' | 'groups' | 'organize'>(initialTab || 'tracks');
+
+  // Double confirmation state for Clear Library
+  const [clearConfirmStep, setClearConfirmStep] = useState<0 | 1 | 2>(0);
+  const [clearConfirmText, setClearConfirmText] = useState('');
+  const [isClearing, setIsClearing] = useState(false);
+
+  // Sync initialTab when modal opens or tab changes externally
+  React.useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab, isOpen]);
 
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -101,6 +187,7 @@ export default function LibraryManagerModal({
   // Upload state
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0, currentName: '' });
+  const [importStatusMessage, setImportStatusMessage] = useState<{ text: string; isError?: boolean } | null>(null);
   const [targetGroupForImport, setTargetGroupForImport] = useState<string>('');
   const [targetMoodForImport, setTargetMoodForImport] = useState<string>('');
   const [targetStyleForImport, setTargetStyleForImport] = useState<string>('');
@@ -115,6 +202,61 @@ export default function LibraryManagerModal({
   const [organizeScheme, setOrganizeScheme] = useState<'group' | 'mood' | 'style' | 'artist' | 'flat'>('group');
   const [isOrganizing, setIsOrganizing] = useState(false);
   const [organizeResult, setOrganizeResult] = useState<string | null>(null);
+
+  // Duplicate Finder & Cleaner State
+  const [isCheckingDuplicates, setIsCheckingDuplicates] = useState(false);
+  const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([]);
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  const [isDeletingDuplicates, setIsDeletingDuplicates] = useState(false);
+  const [duplicateSuccessMsg, setDuplicateSuccessMsg] = useState<string | null>(null);
+
+  const handleCheckDuplicates = async () => {
+    setIsCheckingDuplicates(true);
+    setDuplicateSuccessMsg(null);
+    try {
+      const res = await fetch('/api/library/find-duplicates');
+      const data = await res.json();
+      if (data.success) {
+        setDuplicateGroups(data.duplicateGroups || []);
+        setShowDuplicateModal(true);
+      }
+    } catch (err) {
+      console.error('Error checking duplicates:', err);
+    } finally {
+      setIsCheckingDuplicates(false);
+    }
+  };
+
+  const handleRemoveDuplicates = async (filePaths?: string[]) => {
+    setIsDeletingDuplicates(true);
+    setDuplicateSuccessMsg(null);
+    try {
+      const targets = filePaths && filePaths.length > 0
+        ? filePaths
+        : duplicateGroups.flatMap(g => g.duplicates.map(d => d.filePath));
+
+      if (targets.length === 0) return;
+
+      const res = await fetch('/api/library/remove-duplicates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pathsToDelete: targets, filePaths: targets })
+      });
+      const data = await res.json();
+      if (data.success) {
+        const count = data.deletedCount ?? data.removedCount ?? targets.length;
+        setDuplicateSuccessMsg(`${count} Duplikat(e) erfolgreich gelöscht!`);
+        await onRefreshTracks();
+        const checkRes = await fetch('/api/library/find-duplicates');
+        const checkData = await checkRes.json();
+        setDuplicateGroups(checkData.duplicateGroups || []);
+      }
+    } catch (err) {
+      console.error('Error removing duplicates:', err);
+    } finally {
+      setIsDeletingDuplicates(false);
+    }
+  };
 
   // File Inputs Ref
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -156,51 +298,130 @@ export default function LibraryManagerModal({
   };
 
   // Upload Files to /api/library/upload
-  const handleUploadFiles = async (files: File[]) => {
-    const audioFiles = files.filter(f => /\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(f.name));
-    if (audioFiles.length === 0) return;
+  const handleUploadFiles = async (itemsInput: (File | UploadItem)[]) => {
+    const items: UploadItem[] = itemsInput
+      .map(item => ('file' in item ? item : { file: item }))
+      .filter(item => /\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(item.file.name));
+
+    if (items.length === 0) {
+      setImportStatusMessage({ text: 'Keine kompatiblen Audio-Dateien gefunden (MP3, WAV, FLAC, OGG, M4A, AAC).', isError: true });
+      setTimeout(() => setImportStatusMessage(null), 5000);
+      return;
+    }
 
     setIsUploading(true);
-    setUploadProgress({ current: 0, total: audioFiles.length, currentName: '' });
+    setImportStatusMessage(null);
+    setUploadProgress({ current: 0, total: items.length, currentName: '' });
 
-    for (let i = 0; i < audioFiles.length; i++) {
-      const file = audioFiles[i];
-      setUploadProgress({ current: i + 1, total: audioFiles.length, currentName: file.name });
+    let successCount = 0;
+    let duplicateMergedCount = 0;
+
+    for (let i = 0; i < items.length; i++) {
+      const { file, subfolder } = items[i];
+      setUploadProgress({ current: i + 1, total: items.length, currentName: file.name });
 
       try {
-        // Extract basic ID3 metadata in browser
-        const meta = await extractMetadata(file);
+        // Parallel metadata and duration extraction
+        const [meta, duration] = await Promise.all([
+          extractMetadata(file),
+          getAudioDuration(file)
+        ]);
 
-        // Upload file stream to server
+        const title = meta.title || file.name.replace(/\.[^/.]+$/, '');
+        const artist = meta.artist || 'Unknown Artist';
+        const bpm = meta.bpm || Math.floor(Math.random() * 15 + 124);
+        const key = meta.key || '8A';
+
+        // Execute deep audio analysis
+        let deepData: any = null;
+        try {
+          deepData = await deepAudioAnalyze(file, { title, artist, bpm, key });
+        } catch (deepErr) {
+          console.warn('Deep analysis error on upload:', deepErr);
+        }
+
+        const effectiveBpm = deepData?.beatGrid?.bpm || bpm;
+        const effectiveKey = deepData?.camelotKey || key;
+        const effectiveEnergy = deepData?.calculatedEnergy || 7;
+        const effectiveMood = targetMoodForImport || deepData?.suggestedMood || '';
+        const effectiveStyle = targetStyleForImport || deepData?.suggestedStyle || '';
+        const effectiveDuration = (duration && duration > 0) ? duration : (deepData?.waveform?.durationSec || 0);
+
+        // Prepare upload stream parameters
         const params = new URLSearchParams({
           filename: file.name,
           group: targetGroupForImport,
-          mood: targetMoodForImport,
-          style: targetStyleForImport
+          mood: effectiveMood,
+          style: effectiveStyle,
+          title,
+          artist,
+          bpm: String(effectiveBpm),
+          key: effectiveKey
         });
+
+        if (effectiveDuration > 0) {
+          params.set('duration', String(effectiveDuration));
+        }
+
+        const effectiveSub = subfolder || (file.webkitRelativePath ? file.webkitRelativePath.split('/').slice(0, -1).join('/') : '');
+        if (effectiveSub) {
+          params.set('subfolder', effectiveSub);
+        }
 
         const uploadRes = await fetch(`/api/library/upload?${params.toString()}`, {
           method: 'POST',
           body: file
         });
+
+        if (!uploadRes.ok) {
+          throw new Error(`Server returned HTTP ${uploadRes.status}`);
+        }
+
         const uploadJson = await uploadRes.json();
 
         if (uploadJson.success && uploadJson.filePath) {
-          // Send extracted metadata
+          if (uploadJson.isDuplicate) {
+            duplicateMergedCount++;
+          }
+          // Pre-generate segments if duration is known
+          let segments = deepData?.segments;
+          if (!segments && effectiveDuration > 0) {
+            try {
+              segments = await analyzeTrackSegments(uploadJson.url || `/api/library/stream?file=${encodeURIComponent(uploadJson.filePath)}`, effectiveKey, effectiveEnergy);
+            } catch {
+              // Ignore segment generation errors
+            }
+          }
+
+          // Send extracted cover art, duration, segments and complete deep analysis
           await fetch('/api/library/update-track', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               filePath: uploadJson.filePath,
               updates: {
-                title: meta.title || file.name.replace(/\.[^/.]+$/, ''),
-                artist: meta.artist || 'Unknown Artist',
-                bpm: meta.bpm || Math.floor(Math.random() * 15 + 124),
-                key: meta.key || '8A',
-                coverArt: meta.coverArt || undefined
+                title,
+                artist,
+                bpm: effectiveBpm,
+                key: effectiveKey,
+                energy: effectiveEnergy,
+                mood: effectiveMood,
+                style: effectiveStyle,
+                coverArt: meta.coverArt || undefined,
+                duration: effectiveDuration > 0 ? effectiveDuration : undefined,
+                segments: segments && segments.length > 0 ? segments : undefined,
+                hotCues: deepData?.hotCues,
+                deepAnalysis: deepData || undefined,
+                beatGrid: deepData?.beatGrid || undefined,
+                loudness: deepData?.loudness || undefined,
+                spectral: deepData?.spectral || undefined,
+                spatial: deepData?.spatial || undefined,
+                tempoVariation: deepData?.tempoVariation || undefined
               }
             })
           });
+
+          successCount++;
         }
       } catch (err) {
         console.error('Upload error for file:', file.name, err);
@@ -209,20 +430,47 @@ export default function LibraryManagerModal({
 
     setIsUploading(false);
     await onRefreshTracks();
+    let statusText = `${successCount} von ${items.length} Tracks erfolgreich verarbeitet!`;
+    if (duplicateMergedCount > 0) {
+      statusText += ` (${duplicateMergedCount} Duplikate automatisch erkannt & zusammengeführt)`;
+    }
+    setImportStatusMessage({ 
+      text: statusText, 
+      isError: successCount === 0 
+    });
+    setTimeout(() => setImportStatusMessage(null), 6000);
     setActiveTab('tracks');
   };
 
   // File Inputs
   const onFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      handleUploadFiles(Array.from(e.target.files));
+      const filesList: File[] = Array.from(e.target.files);
+      const items: UploadItem[] = filesList.map((f: File) => {
+        let subfolder: string | undefined = undefined;
+        if (f.webkitRelativePath) {
+          const parts = f.webkitRelativePath.split('/');
+          if (parts.length > 1) {
+            subfolder = parts.slice(0, -1).join('/');
+          }
+        }
+        return { file: f, subfolder };
+      });
+      handleUploadFiles(items);
       e.target.value = '';
     }
   };
 
   // Drag & Drop
-  const onDrop = (e: DragEvent<HTMLDivElement>) => {
+  const onDrop = async (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      const scanned = await scanDroppedItems(e.dataTransfer.items);
+      if (scanned.length > 0) {
+        handleUploadFiles(scanned);
+        return;
+      }
+    }
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       handleUploadFiles(Array.from(e.dataTransfer.files));
     }
@@ -338,7 +586,7 @@ export default function LibraryManagerModal({
     e.preventDefault();
     if (!newGroupName.trim()) return;
 
-    const newGroup: DjoidGroup = {
+    const newGroup: MulimaGroup = {
       id: 'grp_' + Math.random().toString(36).substring(2, 9),
       name: newGroupName.trim(),
       mood: newGroupMood.trim() || undefined,
@@ -401,11 +649,29 @@ export default function LibraryManagerModal({
     }
   };
 
+  // Execute Clear Library (Double Confirmed)
+  const handleExecuteClearLibrary = async () => {
+    setIsClearing(true);
+    try {
+      await fetch('/api/library/clear', { method: 'POST' });
+      if (onClearLibrary) {
+        await onClearLibrary();
+      }
+      await onRefreshTracks();
+      setClearConfirmStep(0);
+      setClearConfirmText('');
+    } catch (err: any) {
+      console.error('Error clearing library:', err);
+    } finally {
+      setIsClearing(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
       
       {/* MODAL WINDOW */}
-      <div className="bg-[#12141a] border border-[#242936] rounded-2xl w-full max-w-6xl h-[90vh] flex flex-col shadow-2xl overflow-hidden text-white font-sans">
+      <div className="bg-[#12141a] border border-[#242936] rounded-2xl w-full max-w-6xl h-[90vh] flex flex-col shadow-2xl overflow-hidden text-white font-sans relative">
         
         {/* MODAL HEADER */}
         <div className="h-16 px-6 bg-[#161920] border-b border-[#242936] flex items-center justify-between shrink-0">
@@ -415,13 +681,17 @@ export default function LibraryManagerModal({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold uppercase tracking-wider text-white">DJOID Library Manager</h2>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-[#A855F7]/20 text-[#A855F7] border border-[#A855F7]/30">
-                  /LIBRARY
+                <h2 className="text-base font-bold uppercase tracking-wider text-white">MuLiMa Pro Library Manager</h2>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-[#A855F7]/20 text-[#A855F7] border border-[#A855F7]/30 font-bold">
+                  /LIBRARY Ordner
                 </span>
               </div>
-              <p className="text-[11px] text-gray-400 font-mono">
-                {tracks.length} Tracks ({totalSizeMB} MB) • Festplatten-Dateisystem aktiv
+              <p className="text-[11px] text-gray-400 font-mono flex items-center gap-2">
+                <span className="text-[#22C55E] font-bold">{tracks.length} Tracks</span>
+                <span>•</span>
+                <span>{totalSizeMB} MB</span>
+                <span>•</span>
+                <span className="text-gray-500">Festplatte aktiv</span>
               </p>
             </div>
           </div>
@@ -466,16 +736,358 @@ export default function LibraryManagerModal({
             </button>
           </div>
 
-          <button 
-            onClick={onClose}
-            className="p-2 hover:bg-[#242936] rounded-xl text-gray-400 hover:text-white transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          {/* Header Action Buttons (Check Duplicates, Clear Library & Close) */}
+          <div className="flex items-center gap-2">
+            <button
+              id="btn-modal-check-duplicates"
+              onClick={handleCheckDuplicates}
+              disabled={isCheckingDuplicates}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 hover:text-cyan-300 border border-cyan-500/30 text-xs font-bold transition-all"
+              title="Library auf doppelte Tracks prüfen"
+            >
+              {isCheckingDuplicates ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <CopyCheck className="w-3.5 h-3.5" />
+              )}
+              <span>Duplikate prüfen</span>
+            </button>
+
+            {tracks.length > 0 && (
+              <button
+                id="btn-modal-clear-library"
+                onClick={() => {
+                  setClearConfirmStep(1);
+                  setClearConfirmText('');
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 border border-red-500/30 text-xs font-bold transition-all"
+                title="Gesamte Library leeren (doppelt geschützt)"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Library leeren</span>
+              </button>
+            )}
+
+            <button 
+              onClick={onClose}
+              className="p-2 hover:bg-[#242936] rounded-xl text-gray-400 hover:text-white transition-colors"
+              title="Schließen"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
+        {/* DOUBLE CONFIRMATION DIALOG FOR CLEAR LIBRARY */}
+        {clearConfirmStep > 0 && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+            <div className="bg-[#161920] border border-red-500/40 rounded-2xl max-w-md w-full p-6 shadow-2xl flex flex-col gap-4 text-white">
+              
+              <div className="flex items-start gap-3">
+                <div className="p-3 rounded-xl bg-red-500/20 text-red-400 border border-red-500/30 shrink-0">
+                  <AlertCircle className="w-6 h-6" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-bold text-sm uppercase tracking-wider text-white">
+                    {clearConfirmStep === 1 ? 'Bibliothek leeren? (Schritt 1 von 2)' : 'Endgültige Sicherheitsabfrage (Schritt 2 von 2)'}
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-1 leading-relaxed">
+                    {clearConfirmStep === 1 
+                      ? `Möchtest du wirklich alle ${tracks.length} Tracks (${totalSizeMB} MB) aus dem /LIBRARY-Verzeichnis entfernen? Alle Playlists, Zuweisungen und Metadaten werden gelöscht.`
+                      : 'Achtung: Dieser Vorgang löscht die Audio-Dateien dauerhaft und unwiderruflich von der Festplatte!'
+                    }
+                  </p>
+                </div>
+              </div>
+
+              {clearConfirmStep === 2 && (
+                <div className="bg-[#0D0E12] p-3 rounded-xl border border-[#242936] flex flex-col gap-2">
+                  <label className="text-[11px] text-gray-300 font-mono">
+                    Tippe zur Bestätigung <span className="text-red-400 font-bold">LEEREN</span> ein:
+                  </label>
+                  <input
+                    type="text"
+                    autoFocus
+                    value={clearConfirmText}
+                    onChange={(e) => setClearConfirmText(e.target.value)}
+                    placeholder="LEEREN"
+                    className="bg-[#161920] border border-red-500/40 focus:border-red-500 rounded-lg px-3 py-2 text-sm text-white font-mono uppercase tracking-widest outline-none"
+                  />
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[#242936]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setClearConfirmStep(0);
+                    setClearConfirmText('');
+                  }}
+                  disabled={isClearing}
+                  className="px-3.5 py-1.5 rounded-lg text-xs font-medium text-gray-400 hover:text-white hover:bg-[#242936] transition-colors"
+                >
+                  Abbrechen
+                </button>
+
+                {clearConfirmStep === 1 ? (
+                  <button
+                    type="button"
+                    onClick={() => setClearConfirmStep(2)}
+                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-all shadow-md shadow-red-600/20"
+                  >
+                    <span>Weiter zur Bestätigung</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={clearConfirmText.trim().toUpperCase() !== 'LEEREN' || isClearing}
+                    onClick={handleExecuteClearLibrary}
+                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:hover:bg-red-600 text-white text-xs font-bold transition-all shadow-md shadow-red-600/30"
+                  >
+                    {isClearing ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Wird gelöscht...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Unwiderruflich leeren</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* DUPLICATE INSPECTION & CLEANUP MODAL */}
+        {showDuplicateModal && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in duration-150">
+            <div className="bg-[#161920] border border-cyan-500/30 rounded-2xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl overflow-hidden text-white font-sans">
+              
+              {/* Modal Header */}
+              <div className="px-6 py-4 bg-[#12141a] border-b border-[#242936] flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm uppercase tracking-wider text-white flex items-center gap-2">
+                      <span>Duplikat-Prüfung & Bereinigung</span>
+                      {duplicateGroups.length > 0 ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                          {duplicateGroups.length} Konflikt(e)
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          Sauber
+                        </span>
+                      )}
+                    </h3>
+                    <p className="text-[11px] text-gray-400 font-mono mt-0.5">
+                      Prüft auf identischen Audio-Inhalt, übereinstimmende Dateigrößen & doppelte Interpreten/Titel
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setShowDuplicateModal(false)}
+                  className="p-1.5 hover:bg-[#242936] rounded-xl text-gray-400 hover:text-white transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Status Message */}
+              {duplicateSuccessMsg && (
+                <div className="px-6 py-3 bg-emerald-950/40 border-b border-emerald-500/30 text-emerald-300 text-xs font-mono flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+                  <span>{duplicateSuccessMsg}</span>
+                </div>
+              )}
+
+              {/* Modal Content */}
+              <div className="p-6 overflow-y-auto flex-1 flex flex-col gap-4 custom-scrollbar">
+                {duplicateGroups.length === 0 ? (
+                  <div className="py-12 flex flex-col items-center justify-center text-center gap-3">
+                    <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shadow-lg shadow-emerald-500/10">
+                      <ShieldCheck className="w-8 h-8" />
+                    </div>
+                    <div className="max-w-md">
+                      <h4 className="text-base font-bold text-white">Keine Duplikate gefunden!</h4>
+                      <p className="text-xs text-gray-400 mt-1 leading-relaxed">
+                        Deine /LIBRARY ist optimal organisiert. Es wurden keine doppelten Audio-Dateien, identischen Dateigrößen oder redundanten Titel-Kombinationen gefunden.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setShowDuplicateModal(false)}
+                      className="mt-2 px-5 py-2 rounded-xl bg-[#242936] hover:bg-[#2f3546] text-white text-xs font-bold transition-all"
+                    >
+                      Schließen
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    {/* Summary Banner & 1-Click Clean */}
+                    {(() => {
+                      const totalDups = duplicateGroups.reduce((acc, g) => acc + g.duplicates.length, 0);
+                      const totalBytes = duplicateGroups.flatMap(g => g.duplicates).reduce((acc, d) => acc + (d.fileSize || 0), 0);
+                      const totalMB = (totalBytes / (1024 * 1024)).toFixed(1);
+
+                      return (
+                        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2.5 rounded-lg bg-amber-500/20 text-amber-400 shrink-0">
+                              <AlertCircle className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <div className="text-xs font-bold text-white">
+                                {totalDups} überflüssige Duplikat-Datei(en) gefunden
+                              </div>
+                              <div className="text-[11px] text-amber-300 font-mono mt-0.5">
+                                Freigebbarer Speicherplatz: {totalMB} MB
+                              </div>
+                            </div>
+                          </div>
+
+                          <button
+                            id="btn-clean-all-duplicates"
+                            onClick={() => handleRemoveDuplicates()}
+                            disabled={isDeletingDuplicates}
+                            className="px-4 py-2 rounded-xl bg-gradient-to-r from-red-600 to-amber-600 hover:from-red-500 hover:to-amber-500 text-white text-xs font-bold transition-all shadow-md shadow-red-600/20 flex items-center justify-center gap-2 disabled:opacity-50 shrink-0"
+                          >
+                            {isDeletingDuplicates ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-4 h-4" />
+                            )}
+                            <span>Alle {totalDups} Duplikate bereinigen</span>
+                          </button>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Duplicate Groups List */}
+                    <div className="space-y-4">
+                      {duplicateGroups.map((group, gIdx) => (
+                        <div key={group.primaryTrack.filePath || gIdx} className="bg-[#101217] border border-[#242936] rounded-xl p-4 flex flex-col gap-3">
+                          {/* Group Header */}
+                          <div className="flex items-center justify-between border-b border-[#1c202a] pb-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-bold text-white">
+                                {group.primaryTrack.title}
+                              </span>
+                              <span className="text-xs text-gray-400 font-medium">
+                                - {group.primaryTrack.artist}
+                              </span>
+                            </div>
+                            <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-950/60 text-cyan-300 border border-cyan-800/40">
+                              {group.matchReason}
+                            </span>
+                          </div>
+
+                          {/* Primary Track (Preserved) */}
+                          <div className="p-3 rounded-lg bg-[#141720] border border-emerald-500/30 flex items-center justify-between text-xs">
+                            <div className="flex items-center gap-2.5 overflow-hidden">
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold font-mono bg-emerald-500/20 text-emerald-400 uppercase shrink-0">
+                                Original (bleibt)
+                              </span>
+                              <div className="truncate">
+                                <p className="font-mono text-gray-300 truncate text-[11px]">
+                                  {group.primaryTrack.filePath}
+                                </p>
+                                <p className="text-[10px] text-gray-500 font-mono">
+                                  {((group.primaryTrack.fileSize || 0) / (1024 * 1024)).toFixed(2)} MB • {group.primaryTrack.bpm || 0} BPM • {group.primaryTrack.key || '-'}
+                                </p>
+                              </div>
+                            </div>
+                            <span className="text-emerald-400 text-xs font-bold shrink-0 ml-2">
+                              Geschützt
+                            </span>
+                          </div>
+
+                          {/* Duplicates to Delete */}
+                          <div className="space-y-2">
+                            {group.duplicates.map(dup => (
+                              <div key={dup.filePath} className="p-3 rounded-lg bg-red-950/20 border border-red-500/20 flex items-center justify-between text-xs hover:border-red-500/40 transition-all">
+                                <div className="flex items-center gap-2.5 overflow-hidden">
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold font-mono bg-red-500/20 text-red-400 uppercase shrink-0">
+                                    Duplikat
+                                  </span>
+                                  <div className="truncate">
+                                    <p className="font-mono text-gray-300 truncate text-[11px]">
+                                      {dup.filePath}
+                                    </p>
+                                    <p className="text-[10px] text-gray-500 font-mono">
+                                      {((dup.fileSize || 0) / (1024 * 1024)).toFixed(2)} MB
+                                    </p>
+                                  </div>
+                                </div>
+                                <button
+                                  onClick={() => handleRemoveDuplicates([dup.filePath])}
+                                  disabled={isDeletingDuplicates}
+                                  className="px-2.5 py-1 rounded bg-red-500/20 hover:bg-red-500/30 text-red-300 text-[11px] font-bold transition-colors flex items-center gap-1 shrink-0 ml-2"
+                                  title="Nur dieses Duplikat entfernen"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                  <span>Löschen</span>
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="px-6 py-3 bg-[#12141a] border-t border-[#242936] flex items-center justify-end">
+                <button
+                  onClick={() => setShowDuplicateModal(false)}
+                  className="px-4 py-1.5 rounded-xl bg-[#242936] hover:bg-[#2f3546] text-white text-xs font-bold transition-all"
+                >
+                  Fertig
+                </button>
+              </div>
+
+            </div>
+          </div>
+        )}
+
         {/* MODAL BODY */}
-        <div className="flex-1 overflow-hidden flex flex-col bg-[#0D0E12]">
+        <div 
+          onDragOver={e => e.preventDefault()}
+          onDrop={onDrop}
+          className="flex-1 overflow-hidden flex flex-col bg-[#0D0E12]"
+        >
+          {/* Status Message Banner */}
+          {importStatusMessage && (
+            <div className={`px-4 py-2.5 text-xs flex items-center justify-between border-b shrink-0 ${
+              importStatusMessage.isError 
+                ? 'bg-red-500/10 text-red-400 border-red-500/30' 
+                : 'bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30'
+            }`}>
+              <div className="flex items-center gap-2">
+                {importStatusMessage.isError ? (
+                  <AlertCircle className="w-4 h-4 text-red-400" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4 text-[#22C55E]" />
+                )}
+                <span>{importStatusMessage.text}</span>
+              </div>
+              <button 
+                onClick={() => setImportStatusMessage(null)}
+                className="hover:opacity-75 p-1"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
 
           {/* 1. TAB: TRACKS LIST */}
           {activeTab === 'tracks' && (
@@ -532,8 +1144,16 @@ export default function LibraryManagerModal({
                   </select>
                 </div>
 
-                {/* Batch Actions & Refresh */}
+                {/* Batch Actions, Add Button & Refresh */}
                 <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => setActiveTab('import')}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-[#A855F7] to-[#06B6D4] text-white rounded-xl text-xs font-bold hover:brightness-110 transition-all shadow-sm"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>+ Tracks importieren</span>
+                  </button>
+
                   <button 
                     onClick={selectAllFiltered}
                     className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[#0D0E12] border border-[#242936] rounded-xl text-xs text-gray-300 hover:text-white hover:border-gray-500 transition-colors"
@@ -703,7 +1323,7 @@ export default function LibraryManagerModal({
                             </select>
                           </div>
 
-                          {/* Assigned Groups Chips (DJOID Style) */}
+                          {/* Assigned Groups Chips (MuLiMa Pro Style) */}
                           <div className="flex flex-wrap items-center gap-1 shrink-0 max-w-[180px]">
                             {groups.map(g => {
                               const isAssigned = track.groups?.includes(g.id);
@@ -723,6 +1343,24 @@ export default function LibraryManagerModal({
                               );
                             })}
                           </div>
+
+                          {/* Deep Analysis Studio Button */}
+                          {onOpenAnalysisTrack && (
+                            <button 
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                onOpenAnalysisTrack(track);
+                                onClose();
+                              }}
+                              className="p-1.5 text-cyan-400 hover:text-cyan-300 hover:bg-cyan-400/10 border border-cyan-500/30 rounded-lg transition-all shrink-0 flex items-center gap-1 text-[10px] font-semibold cursor-pointer"
+                              title="Deep Analysis Studio & Online-Portale öffnen"
+                            >
+                              <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                              <span className="hidden md:inline">Studio</span>
+                            </button>
+                          )}
 
                           {/* Delete Button */}
                           <button 
@@ -833,7 +1471,7 @@ export default function LibraryManagerModal({
                 ref={fileInputRef} 
                 onChange={onFileChange} 
                 multiple 
-                accept="audio/*" 
+                accept=".mp3,.wav,.flac,.ogg,.m4a,.aac,audio/*" 
                 className="hidden" 
               />
               <input 
@@ -841,8 +1479,8 @@ export default function LibraryManagerModal({
                 ref={folderInputRef} 
                 onChange={onFileChange} 
                 // @ts-ignore
-                webkitdirectory="true" 
-                directory="true" 
+                webkitdirectory="" 
+                directory="" 
                 multiple 
                 className="hidden" 
               />
@@ -870,7 +1508,7 @@ export default function LibraryManagerModal({
             </div>
           )}
 
-          {/* 3. TAB: GRUPPEN & STILE (DJOID) */}
+          {/* 3. TAB: GRUPPEN & STILE (MuLiMa Pro) */}
           {activeTab === 'groups' && (
             <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full">
               
@@ -1043,7 +1681,7 @@ export default function LibraryManagerModal({
                       className="mt-1 accent-[#A855F7]"
                     />
                     <div>
-                      <div className="text-xs font-bold text-white">Nach Gruppe (Empfohlen für DJOID)</div>
+                      <div className="text-xs font-bold text-white">Nach Gruppe (Empfohlen für MuLiMa Pro)</div>
                       <div className="text-[11px] text-gray-400 font-mono mt-0.5">LIBRARY / [Warmup | Peaktime | Afterhour] / [Track].mp3</div>
                     </div>
                   </label>

@@ -1,14 +1,19 @@
 import React, { useState, useRef, useEffect, ChangeEvent } from 'react';
-import { FolderPlus, Play, Pause, Volume2, Plus, GripVertical, ListVideo, SlidersHorizontal, Activity, Music, Loader2, Database, Trash2, AlertTriangle, Unlock, Edit2, Copy, Check, X, HardDrive } from 'lucide-react';
+import { FolderPlus, Play, Pause, Volume2, Plus, GripVertical, ListVideo, SlidersHorizontal, Activity, Music, Loader2, Database, Trash2, AlertTriangle, Unlock, Edit2, Copy, Check, X, HardDrive, LayoutGrid, List } from 'lucide-react';
 import { extractMetadata } from './lib/audioMetadata';
 import { getDB, saveTrack, getAllTracks, clearTracks, savePlaylist, getAllPlaylists, deletePlaylist, saveGroup, getAllGroups, deleteGroup } from './lib/db';
 import ScatterMap from './components/ScatterMap';
 import GraphMap from './components/GraphMap';
 import AnalyzerPanel from './components/AnalyzerPanel';
+import TrackAnalysisView from './components/TrackAnalysisView';
 import PlaylistGroups from './components/PlaylistGroups';
 import LibraryManagerModal from './components/LibraryManagerModal';
+import CamelotWheel from './components/CamelotWheel';
+import DjFilters from './components/DjFilters';
+import SetPlaylistDrawer from './components/SetPlaylistDrawer';
+import DjSetPlayer from './components/DjSetPlayer';
 import { analyzeTrackSegments, TrackSegment } from './lib/audioAnalysis';
-import { TrackDef, DjoidGroup, HotCue, PlaylistDef } from './types';
+import { TrackDef, MulimaGroup, HotCue, PlaylistDef, TransitionConfig } from './types';
 
 export type { HotCue };
 
@@ -20,14 +25,38 @@ export type Playlist = {
 
 export type Track = TrackDef;
 
+export interface ListColumnsConfig {
+  cover: boolean;
+  title: boolean;
+  album: boolean;
+  bpm: boolean;
+  key: boolean;
+  energy: boolean;
+  genre: boolean;
+  duration: boolean;
+  actions: boolean;
+}
+
+export const DEFAULT_LIST_COLUMNS: ListColumnsConfig = {
+  cover: true,
+  title: true,
+  album: true,
+  bpm: true,
+  key: true,
+  energy: true,
+  genre: true,
+  duration: true,
+  actions: true,
+};
+
 
 const camelotKeys = [
   '1A','2A','3A','4A','5A','6A','7A','8A','9A','10A','11A','12A',
   '1B','2B','3B','4B','5B','6B','7B','8B','9B','10B','11B','12B'
 ];
 
-const globalDJOIDEngine = typeof window !== 'undefined' ? new Audio() : (null as any);
-if (globalDJOIDEngine) { globalDJOIDEngine.volume = 1.0; }
+const globalMulimaEngine = typeof window !== 'undefined' ? new Audio() : (null as any);
+if (globalMulimaEngine) { globalMulimaEngine.volume = 1.0; }
 
 export default function App() {
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -36,10 +65,70 @@ export default function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [isLibraryManagerOpen, setIsLibraryManagerOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<'grid' | 'scatter' | 'graph'>('grid');
+  const [managerInitialTab, setManagerInitialTab] = useState<'tracks' | 'import' | 'groups' | 'organize'>('tracks');
+  const [isSetPlaylistOpen, setIsSetPlaylistOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<'grid' | 'list' | 'scatter' | 'graph'>('grid');
+  
+  // DJ Set Transitions State
+  const [setTransitions, setSetTransitions] = useState<TransitionConfig[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('mulima_set_transitions');
+        if (saved) return JSON.parse(saved);
+      } catch {}
+    }
+    return [];
+  });
+  const [activeTransitionId, setActiveTransitionId] = useState<string | undefined>(undefined);
+
+  const handleTransitionsChange = (newTransitions: TransitionConfig[]) => {
+    setSetTransitions(newTransitions);
+    try {
+      localStorage.setItem('mulima_set_transitions', JSON.stringify(newTransitions));
+    } catch {}
+  };
+  
+  // List View Column Customizer State
+  const [listColumns, setListColumns] = useState<ListColumnsConfig>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('mulima_list_columns');
+        if (saved) return { ...DEFAULT_LIST_COLUMNS, ...JSON.parse(saved) };
+      } catch {}
+    }
+    return DEFAULT_LIST_COLUMNS;
+  });
+  const [showColumnConfigModal, setShowColumnConfigModal] = useState(false);
+
+  const toggleListColumn = (key: keyof ListColumnsConfig) => {
+    setListColumns(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      try {
+        localStorage.setItem('mulima_list_columns', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const resetListColumns = () => {
+    setListColumns(DEFAULT_LIST_COLUMNS);
+    try {
+      localStorage.setItem('mulima_list_columns', JSON.stringify(DEFAULT_LIST_COLUMNS));
+    } catch {}
+  };
+
+  const selectAllListColumns = () => {
+    const all: ListColumnsConfig = {
+      cover: true, title: true, album: true, bpm: true, key: true, energy: true, genre: true, duration: true, actions: true
+    };
+    setListColumns(all);
+    try {
+      localStorage.setItem('mulima_list_columns', JSON.stringify(all));
+    } catch {}
+  };
   
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
-  const [groups, setGroups] = useState<DjoidGroup[]>([]);
+  const [groups, setGroups] = useState<MulimaGroup[]>([]);
   const [isCreatingPlaylist, setIsCreatingPlaylist] = useState(false);
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [editingPlaylistId, setEditingPlaylistId] = useState<string | null>(null);
@@ -59,7 +148,34 @@ export default function App() {
   const [hotCues, setHotCues] = useState<Record<string, HotCue[]>>({});
 
   const fallbackInputRef = useRef<HTMLInputElement>(null);
-  const audioRef = useRef<HTMLAudioElement>(globalDJOIDEngine);
+  const audioRef = useRef<HTMLAudioElement>(globalMulimaEngine);
+
+  // Deduplicate tracks helper so no redundant copies appear in the UI
+  const deduplicateTracks = (rawTracks: Track[]): Track[] => {
+    const seenIds = new Set<string>();
+    const seenPaths = new Set<string>();
+    const seenSignatures = new Set<string>();
+    const unique: Track[] = [];
+
+    for (const t of rawTracks) {
+      const idKey = t.id ? t.id.toLowerCase() : '';
+      const pathKey = t.filePath ? t.filePath.toLowerCase().replace(/\\/g, '/') : '';
+      const normArtist = (t.artist || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      const normTitle = (t.title || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      const sigKey = (normArtist && normTitle) ? `${normArtist}___${normTitle}` : '';
+
+      if (idKey && seenIds.has(idKey)) continue;
+      if (pathKey && seenPaths.has(pathKey)) continue;
+      if (sigKey && seenSignatures.has(sigKey)) continue;
+
+      if (idKey) seenIds.add(idKey);
+      if (pathKey) seenPaths.add(pathKey);
+      if (sigKey) seenSignatures.add(sigKey);
+
+      unique.push(t);
+    }
+    return unique;
+  };
 
   // Load from /LIBRARY on disk, with IndexedDB fallback
   const loadLibraryFromDisk = async () => {
@@ -67,14 +183,22 @@ export default function App() {
       const res = await fetch('/api/library/tracks');
       const data = await res.json();
       if (data.success && data.tracks && data.tracks.length > 0) {
-        setTracks(data.tracks);
+        const uniqueDiskTracks = deduplicateTracks(data.tracks);
+        setTracks(uniqueDiskTracks);
+        // Sync disk tracks to IndexedDB
+        uniqueDiskTracks.forEach((t: Track) => {
+          saveTrack(t).catch(() => {});
+        });
         if (data.groups && data.groups.length > 0) {
           setGroups(data.groups);
+          data.groups.forEach((g: MulimaGroup) => {
+            saveGroup(g).catch(() => {});
+          });
         }
       } else {
         // Fallback to IndexedDB if disk library is empty
         const savedTracks = await getAllTracks();
-        if (savedTracks.length > 0) setTracks(savedTracks);
+        if (savedTracks.length > 0) setTracks(deduplicateTracks(savedTracks));
         const savedGroups = await getAllGroups();
         if (savedGroups.length > 0) setGroups(savedGroups);
       }
@@ -87,7 +211,7 @@ export default function App() {
         getAllPlaylists(),
         getAllGroups()
       ]);
-      if (savedTracks.length > 0) setTracks(savedTracks);
+      if (savedTracks.length > 0) setTracks(deduplicateTracks(savedTracks));
       if (savedPlaylists.length > 0) setPlaylists(savedPlaylists);
       if (savedGroups.length > 0) setGroups(savedGroups);
     }
@@ -99,7 +223,7 @@ export default function App() {
 
   // Audio setup
   useEffect(() => {
-    const audio = globalDJOIDEngine;
+    const audio = globalMulimaEngine;
     audio.volume = volume;
     
     const updateTime = () => setCurrentTime(audio.currentTime);
@@ -141,13 +265,13 @@ export default function App() {
 
   // Volume
   useEffect(() => {
-    if (globalDJOIDEngine) globalDJOIDEngine.volume = volume;
+    if (globalMulimaEngine) globalMulimaEngine.volume = volume;
   }, [volume]);
 
   // Autoplay and Seek
   useEffect(() => {
-    if (currentTrack && globalDJOIDEngine) {
-      const audio = globalDJOIDEngine;
+    if (currentTrack && globalMulimaEngine) {
+      const audio = globalMulimaEngine;
       
       if (currentTrack.url) {
         if (audio.src !== currentTrack.url) {
@@ -174,13 +298,13 @@ export default function App() {
   }, [currentTrack, jumpToTime]);
 
   const togglePlay = () => {
-    if (globalDJOIDEngine) {
+    if (globalMulimaEngine) {
       if (isPlaying) {
-        globalDJOIDEngine.pause();
+        globalMulimaEngine.pause();
         setIsPlaying(false);
       } else {
-        if (!globalDJOIDEngine.src) return;
-        globalDJOIDEngine.play().catch((e: any) => {
+        if (!globalMulimaEngine.src) return;
+        globalMulimaEngine.play().catch((e: any) => {
           if (e.name !== 'AbortError') setIsPlaying(false);
         });
         setIsPlaying(true);
@@ -189,10 +313,10 @@ export default function App() {
   };
 
   const handleProgressClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!globalDJOIDEngine || !duration) return;
+    if (!globalMulimaEngine || !duration) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const pos = (e.clientX - rect.left) / rect.width;
-    globalDJOIDEngine.currentTime = pos * duration;
+    globalMulimaEngine.currentTime = pos * duration;
   };
 
   const formatTime = (time: number) => {
@@ -476,10 +600,12 @@ export default function App() {
 
   const addToPlaylist = (track: Track) => {
     setPlaylist(prev => [...prev, track]);
+    setIsSetPlaylistOpen(true);
   };
 
   const addMultipleToPlaylist = (tracksToAdd: Track[]) => {
     setPlaylist(prev => [...prev, ...tracksToAdd]);
+    setIsSetPlaylistOpen(true);
   };
 
   // Groups CRUD
@@ -517,8 +643,17 @@ export default function App() {
     return matchesKey && matchesBPM && matchesEnergy && matchesGroup;
   });
 
+  const activeTransition = setTransitions.find(t => t.id === activeTransitionId) || setTransitions[0] || null;
+  const graphDisplayTracks = playlist.length > 0 ? playlist : tracks.slice(0, 8);
+  const deckATrack = activeTransition 
+    ? (tracks.find(t => t.id === activeTransition.sourceTrackId) || null) 
+    : (graphDisplayTracks[0] || null);
+  const deckBTrack = activeTransition 
+    ? (tracks.find(t => t.id === activeTransition.targetTrackId) || null) 
+    : (graphDisplayTracks[1] || null);
+
   return (
-    <div className="flex flex-col h-screen bg-[#0D0E12] text-white font-sans overflow-hidden pb-20 selection:bg-[#A855F7]/30">
+    <div className={`flex flex-col h-screen bg-[#0D0E12] text-white font-sans overflow-hidden ${viewMode === 'graph' ? 'pb-32' : 'pb-20'} selection:bg-[#A855F7]/30`}>
       
       <div className="flex flex-1 overflow-hidden relative">
         <input 
@@ -540,7 +675,7 @@ export default function App() {
               id="btn-sidebar-library-manager"
               onClick={() => setIsLibraryManagerOpen(true)}
               className="w-full bg-gradient-to-r from-[#A855F7] to-[#06B6D4] hover:from-[#b56ef8] hover:to-[#22d3ee] text-white rounded-xl py-2.5 px-3 text-xs font-bold transition-all mb-2 flex items-center justify-center gap-2 shadow-md shadow-[#A855F7]/20 active:scale-[0.98]"
-              title="DJOID Library Manager öffnen"
+              title="MuLiMa Pro Library Manager öffnen"
             >
               <HardDrive className="w-4 h-4 text-white" />
               <span>Library Manager</span>
@@ -548,33 +683,10 @@ export default function App() {
                 {tracks.length}
               </span>
             </button>
-
-            <button 
-              onClick={() => setIsLibraryManagerOpen(true)}
-              className="w-full bg-[#0D0E12] hover:bg-[#242936] border border-[#242936] hover:border-[#A855F7]/50 text-gray-300 hover:text-white font-bold py-2 rounded-xl flex items-center justify-center gap-2 transition-colors text-xs"
-            >
-              <FolderPlus className="w-3.5 h-3.5 text-[#A855F7]" />
-              + Tracks in /LIBRARY
-            </button>
-            
-            <div className="mt-3 flex flex-col gap-2">
-              <div className="flex items-center justify-between text-[10px] text-gray-400 font-mono bg-[#0D0E12] border border-[#242936] p-2 rounded-lg">
-                <div className="flex items-center gap-1.5">
-                  <Database className="w-3 h-3 text-[#22C55E]" />
-                  <span>/LIBRARY Ordner:</span>
-                </div>
-                <span className="text-white font-bold">{tracks.length} Tracks</span>
-              </div>
-              {tracks.length > 0 && (
-                <button onClick={handleClearLibrary} className="w-full flex items-center justify-center gap-2 text-[10px] uppercase tracking-widest font-bold text-gray-500 hover:text-red-400 hover:bg-red-400/10 border border-transparent hover:border-red-400/30 p-1.5 rounded-lg transition-colors">
-                  <Trash2 className="w-3 h-3" /> Library leeren
-                </button>
-              )}
-            </div>
           </div>
 
         <div className="flex-1 overflow-y-auto p-4">
-          <div className="mb-8">
+          <div className="mb-6">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
                 <ListVideo className="w-3 h-3" /> Playlists
@@ -637,68 +749,29 @@ export default function App() {
               groups={groups}
               selectedGroup={selectedGroup}
               onSelectGroup={setSelectedGroup}
-              onCreateGroup={handleCreateGroup}
-              onDeleteGroup={handleDeleteGroup}
-              onUpdateGroup={handleUpdateGroup}
+              onOpenManager={(tab) => {
+                setManagerInitialTab((tab as any) || 'groups');
+                setIsLibraryManagerOpen(true);
+              }}
               tracks={tracks}
             />
           </div>
 
-          <div className="mb-8">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-              <Activity className="w-3 h-3" /> Camelot Keys
-            </h3>
-            <div className="grid grid-cols-4 gap-1.5">
-              {camelotKeys.map(k => (
-                <button 
-                  key={k} 
-                  onClick={() => setSelectedKey(selectedKey === k ? null : k)}
-                  className={`text-[9px] font-mono py-1.5 rounded transition-all ${
-                    selectedKey === k 
-                      ? 'bg-[#A855F7]/20 border border-[#A855F7] text-[#A855F7] shadow-[0_0_10px_rgba(168,85,247,0.3)]' 
-                      : 'bg-[#0D0E12] border border-[#242936] text-gray-500 hover:text-white hover:border-gray-500'
-                  }`}
-                >
-                  {k}
-                </button>
-              ))}
-            </div>
+          <div className="mb-6">
+            <CamelotWheel 
+              selectedKey={selectedKey}
+              onSelectKey={setSelectedKey}
+              tracks={tracks}
+            />
           </div>
 
-          <div>
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-              <SlidersHorizontal className="w-3 h-3" /> Filters
-            </h3>
-            <div className="space-y-4">
-              <div>
-                <div className="flex justify-between text-[10px] text-gray-500 font-mono mb-1">
-                  <span>BPM Range</span>
-                  <span className="text-[#A855F7]">{bpmRange[0]} - {bpmRange[1]}</span>
-                </div>
-                <input 
-                  type="range" 
-                  min="60" 
-                  max="200" 
-                  value={bpmRange[1]}
-                  onChange={e => setBpmRange([bpmRange[0], parseInt(e.target.value)])}
-                  className="w-full accent-[#A855F7] h-1 bg-[#0D0E12] rounded-lg appearance-none cursor-pointer" 
-                />
-              </div>
-              <div>
-                <div className="flex justify-between text-[10px] text-gray-500 font-mono mb-1">
-                  <span>Energy Level</span>
-                  <span className="text-[#A855F7]">{energyRange[0]} - {energyRange[1]}</span>
-                </div>
-                <input 
-                  type="range" 
-                  min="0" 
-                  max="10" 
-                  value={energyRange[1]}
-                  onChange={e => setEnergyRange([energyRange[0], parseInt(e.target.value)])}
-                  className="w-full accent-[#A855F7] h-1 bg-[#0D0E12] rounded-lg appearance-none cursor-pointer" 
-                />
-              </div>
-            </div>
+          <div className="mb-6">
+            <DjFilters 
+              bpmRange={bpmRange}
+              onBpmRangeChange={setBpmRange}
+              energyRange={energyRange}
+              onEnergyRangeChange={setEnergyRange}
+            />
           </div>
         </div>
       </div>
@@ -708,47 +781,302 @@ export default function App() {
         <div className="h-16 px-6 border-b border-[#242936] flex items-center justify-between shrink-0 bg-[#161920] z-10">
           <div className="flex items-center gap-4">
             <h2 className="font-bold text-sm uppercase tracking-widest flex items-center gap-2 text-white">
-              <Activity className="w-4 h-4 text-[#A855F7]" /> Visual Library
+              {viewMode === 'list' ? (
+                <>
+                  <List className="w-4 h-4 text-cyan-400" /> List View
+                </>
+              ) : viewMode === 'scatter' ? (
+                <>
+                  <Activity className="w-4 h-4 text-[#06B6D4]" /> Scatter Map
+                </>
+              ) : viewMode === 'graph' ? (
+                <>
+                  <Activity className="w-4 h-4 text-[#22C55E]" /> Graph Map
+                </>
+              ) : (
+                <>
+                  <LayoutGrid className="w-4 h-4 text-[#A855F7]" /> Cover View
+                </>
+              )}
             </h2>
-
-            <button 
-              id="btn-header-library-manager"
-              onClick={() => setIsLibraryManagerOpen(true)}
-              className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#A855F7] to-[#06B6D4] hover:from-[#b56ef8] hover:to-[#22d3ee] text-white text-xs font-bold transition-all shadow-md shadow-[#A855F7]/25 hover:scale-[1.02] active:scale-[0.98]"
-              title="DJOID Library Manager öffnen"
-            >
-              <HardDrive className="w-3.5 h-3.5" />
-              <span>Library Manager</span>
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-black/40 border border-white/20">
-                {tracks.length}
-              </span>
-            </button>
+            <span className="text-xs font-mono text-gray-500">
+              ({filteredTracks.length} {filteredTracks.length === 1 ? 'Track' : 'Tracks'})
+            </span>
           </div>
           
-          <div className="flex bg-[#0D0E12] p-1 border border-[#242936] rounded-lg">
+          <div className="flex bg-[#0D0E12] p-1 border border-[#242936] rounded-xl gap-1">
             <button 
+              id="btn-view-cover"
               onClick={() => setViewMode('grid')} 
-              className={`px-4 py-1 rounded text-xs font-bold uppercase tracking-wider transition-colors ${viewMode === 'grid' ? 'bg-[#242936] text-white' : 'text-gray-500 hover:text-gray-300'}`}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 ${viewMode === 'grid' ? 'bg-[#242936] text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
+              title="Cover View (Große Album-Cover Raster-Ansicht)"
             >
-              Grid
+              <LayoutGrid className="w-3.5 h-3.5 text-[#A855F7]" />
+              <span>Cover View</span>
+            </button>
+            <button 
+              id="btn-view-list"
+              onClick={() => setViewMode('list')} 
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 ${viewMode === 'list' ? 'bg-[#242936] text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
+              title="List View (Kompakte Tabellen-Ansicht mit Thumbnail)"
+            >
+              <List className="w-3.5 h-3.5 text-cyan-400" />
+              <span>List View</span>
             </button>
             <button 
               onClick={() => setViewMode('scatter')} 
-              className={`px-4 py-1 rounded text-xs font-bold uppercase tracking-wider transition-colors ${viewMode === 'scatter' ? 'bg-[#242936] text-white' : 'text-gray-500 hover:text-gray-300'}`}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${viewMode === 'scatter' ? 'bg-[#242936] text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
+              title="Scatter Map (2D Harmonische BPM/Energy-Karte)"
             >
-              Scatter Map
+              Scatter
             </button>
             <button 
               onClick={() => setViewMode('graph')} 
-              className={`px-4 py-1 rounded text-xs font-bold uppercase tracking-wider transition-colors ${viewMode === 'graph' ? 'bg-[#242936] text-white' : 'text-gray-500 hover:text-gray-300'}`}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${viewMode === 'graph' ? 'bg-[#242936] text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
+              title="Graph Map (Strukturierte Track-Relationen)"
             >
-              Graph Map
+              Graph
             </button>
+
+            {/* List View Column Customizer Trigger */}
+            {viewMode === 'list' && (
+              <div className="relative ml-2">
+                <button
+                  id="btn-list-columns-config"
+                  onClick={() => setShowColumnConfigModal(!showColumnConfigModal)}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-mono font-bold flex items-center gap-1.5 transition-all border ${
+                    showColumnConfigModal 
+                      ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50 shadow-sm' 
+                      : 'bg-[#1E2330] text-gray-300 hover:text-white border-[#2F3646]'
+                  }`}
+                  title="Spalten ein- und ausblenden"
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Spalten</span>
+                </button>
+
+                {showColumnConfigModal && (
+                  <div className="absolute right-0 top-full mt-2 w-64 bg-[#161920] border border-[#2F3646] rounded-xl shadow-2xl z-50 p-3 flex flex-col gap-2">
+                    <div className="flex items-center justify-between border-b border-[#242936] pb-2">
+                      <span className="font-bold text-xs uppercase tracking-wider text-white">Spalten anpassen</span>
+                      <button onClick={() => setShowColumnConfigModal(false)} className="text-gray-400 hover:text-white">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="flex flex-col gap-1 max-h-64 overflow-y-auto py-1 text-xs">
+                      {[
+                        { key: 'cover' as const, label: 'Cover-Thumbnail' },
+                        { key: 'title' as const, label: 'Titel & Interpret' },
+                        { key: 'album' as const, label: 'Album & Jahr' },
+                        { key: 'bpm' as const, label: 'BPM (Tempo)' },
+                        { key: 'key' as const, label: 'Tonart (Key)' },
+                        { key: 'energy' as const, label: 'Energy-Level' },
+                        { key: 'genre' as const, label: 'Genre & Mood' },
+                        { key: 'duration' as const, label: 'Laufzeit / Dauer' },
+                        { key: 'actions' as const, label: 'Aktionen (Studio, +)' },
+                      ].map(col => (
+                        <label key={col.key} className="flex items-center gap-2.5 px-2 py-1 rounded hover:bg-[#1E2330] cursor-pointer text-gray-300 hover:text-white select-none">
+                          <input
+                            type="checkbox"
+                            checked={listColumns[col.key]}
+                            onChange={() => toggleListColumn(col.key)}
+                            className="accent-cyan-400 rounded cursor-pointer"
+                          />
+                          <span className="text-xs font-mono">{col.label}</span>
+                        </label>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center justify-between border-t border-[#242936] pt-2 text-[10px] font-mono">
+                      <button onClick={selectAllListColumns} className="text-cyan-400 hover:underline">Alle an</button>
+                      <button onClick={resetListColumns} className="text-gray-400 hover:underline">Standard</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
         <div className="flex-1 relative overflow-hidden flex flex-col bg-[#0D0E12]">
-          {viewMode === 'grid' ? (
+          {viewMode === 'list' ? (
+            <div className="flex-1 p-5 overflow-y-auto relative">
+              {tracks.length === 0 && !isScanning ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-600">
+                  <FolderPlus className="w-16 h-16 mb-4 opacity-20" />
+                  <p className="text-sm font-medium">Library is empty. Import a folder to start.</p>
+                </div>
+              ) : (
+                <div className="bg-[#12141A] rounded-xl border border-[#242936] overflow-hidden shadow-xl">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-[#242936] bg-[#161920] text-gray-400 font-mono text-[11px] uppercase tracking-wider select-none">
+                        {listColumns.cover && <th className="py-3 px-3 w-14 text-center">Cover</th>}
+                        {listColumns.title && <th className="py-3 px-4">Titel & Interpret</th>}
+                        {listColumns.album && <th className="py-3 px-4">Album & Jahr</th>}
+                        {listColumns.bpm && <th className="py-3 px-3 text-center">BPM</th>}
+                        {listColumns.key && <th className="py-3 px-3 text-center">Key</th>}
+                        {listColumns.energy && <th className="py-3 px-3 text-center">Energy</th>}
+                        {listColumns.genre && <th className="py-3 px-4">Genre / Mood</th>}
+                        {listColumns.duration && <th className="py-3 px-3 text-right">Dauer</th>}
+                        {listColumns.actions && <th className="py-3 px-4 text-right">Aktionen</th>}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#1E2330]">
+                      {filteredTracks.map((track) => {
+                        const isThisTrackPlaying = isPlaying && currentTrack?.id === track.id;
+                        const durationFormatted = track.duration
+                          ? `${Math.floor(track.duration / 60)}:${Math.floor(track.duration % 60).toString().padStart(2, '0')}`
+                          : '--:--';
+
+                        return (
+                          <tr
+                            key={track.id}
+                            onClick={() => setCurrentTrack(track)}
+                            className={`group hover:bg-[#1A1E29] transition-colors cursor-pointer ${
+                              currentTrack?.id === track.id ? 'bg-[#181C26]' : ''
+                            }`}
+                          >
+                            {/* Artwork Thumbnail */}
+                            {listColumns.cover && (
+                              <td className="py-2.5 px-3 text-center">
+                                <div className="w-11 h-11 rounded-lg bg-[#0A0C10] border border-[#242936] overflow-hidden relative mx-auto shrink-0 shadow-sm">
+                                  {track.coverArt ? (
+                                    <img src={track.coverArt} alt={track.title} className="w-full h-full object-cover" />
+                                  ) : (
+                                    <div
+                                      className="w-full h-full flex items-center justify-center"
+                                      style={{ background: track.gradient || 'linear-gradient(to bottom right, #374151, #161920)' }}
+                                    >
+                                      <Music className="w-5 h-5 text-gray-400" />
+                                    </div>
+                                  )}
+                                  <div
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (currentTrack?.id === track.id) {
+                                        setIsPlaying(!isPlaying);
+                                        if (audioRef.current) {
+                                          if (isPlaying) audioRef.current.pause();
+                                          else audioRef.current.play();
+                                        }
+                                      } else {
+                                        setCurrentTrack(track);
+                                      }
+                                    }}
+                                    className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
+                                    title={isThisTrackPlaying ? 'Pause' : 'Abspielen'}
+                                  >
+                                    {isThisTrackPlaying ? (
+                                      <Pause className="w-4 h-4 text-lime-400" />
+                                    ) : (
+                                      <Play className="w-4 h-4 text-white ml-0.5" />
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                            )}
+
+                            {/* Title & Artist */}
+                            {listColumns.title && (
+                              <td className="py-2.5 px-4 min-w-[200px]">
+                                <div className="font-bold text-white text-xs truncate max-w-xs group-hover:text-cyan-300 transition-colors">
+                                  {track.title}
+                                </div>
+                                <div className="text-gray-400 text-[11px] truncate max-w-xs">
+                                  {track.artist || 'Unbekannter Künstler'}
+                                </div>
+                              </td>
+                            )}
+
+                            {/* Album & Year */}
+                            {listColumns.album && (
+                              <td className="py-2.5 px-4 text-gray-300 font-mono text-[11px] min-w-[150px]">
+                                <div className="truncate max-w-xs">{track.album || '—'}</div>
+                                <div className="text-gray-500 text-[10px]">{track.year || ''}</div>
+                              </td>
+                            )}
+
+                            {/* BPM */}
+                            {listColumns.bpm && (
+                              <td className="py-2.5 px-3 text-center">
+                                <span className="px-2 py-0.5 rounded-full font-mono font-bold text-[11px] bg-[#06B6D4]/15 text-[#06B6D4] border border-[#06B6D4]/30">
+                                  {track.bpm}
+                                </span>
+                              </td>
+                            )}
+
+                            {/* Camelot Key */}
+                            {listColumns.key && (
+                              <td className="py-2.5 px-3 text-center">
+                                <span className="px-2 py-0.5 rounded-full font-mono font-bold text-[11px] bg-[#A855F7]/15 text-[#A855F7] border border-[#A855F7]/30">
+                                  {track.key}
+                                </span>
+                              </td>
+                            )}
+
+                            {/* Energy Level */}
+                            {listColumns.energy && (
+                              <td className="py-2.5 px-3 text-center">
+                                <span className="px-2 py-0.5 rounded-full font-mono font-bold text-[10px] bg-[#F59E0B]/15 text-[#F59E0B] border border-[#F59E0B]/30">
+                                  ⚡ {track.energy}/10
+                                </span>
+                              </td>
+                            )}
+
+                            {/* Genre / Mood */}
+                            {listColumns.genre && (
+                              <td className="py-2.5 px-4 text-gray-400 text-[11px]">
+                                <div className="truncate max-w-[140px] font-medium text-gray-300">
+                                  {track.genre || track.style || 'Electronic'}
+                                </div>
+                                {track.mood && (
+                                  <div className="text-gray-500 text-[10px] truncate max-w-[140px]">
+                                    {track.mood}
+                                  </div>
+                                )}
+                              </td>
+                            )}
+
+                            {/* Duration */}
+                            {listColumns.duration && (
+                              <td className="py-2.5 px-3 text-right font-mono text-gray-400 text-xs">
+                                {durationFormatted}
+                              </td>
+                            )}
+
+                            {/* Action Buttons */}
+                            {listColumns.actions && (
+                              <td className="py-2.5 px-4 text-right" onClick={(e) => e.stopPropagation()}>
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <button
+                                    onClick={() => setActiveTrackForAnalysis(track)}
+                                    className="px-2 py-1 rounded-lg bg-[#1E2330] hover:bg-[#2A3245] text-cyan-400 hover:text-white border border-[#2F3646] font-mono text-[10px] font-bold flex items-center gap-1 transition-all"
+                                    title="Studio Deep Analysis & Precision Waveform öffnen"
+                                  >
+                                    <Activity className="w-3.5 h-3.5" />
+                                    <span>Studio</span>
+                                  </button>
+                                  <button
+                                    onClick={() => addToPlaylist(track)}
+                                    className="p-1.5 rounded-lg bg-[#1E2330] hover:bg-[#22C55E] text-gray-300 hover:text-black border border-[#2F3646] transition-all"
+                                    title="Zu Set Playlist hinzufügen"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ) : viewMode === 'grid' ? (
             <div className="flex-1 p-6 overflow-y-auto relative">
               {tracks.length === 0 && !isScanning ? (
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-600">
@@ -756,7 +1084,7 @@ export default function App() {
                   <p className="text-sm font-medium">Library is empty. Import a folder to start.</p>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 3xl:grid-cols-8 gap-4">
                   {filteredTracks.map((track) => (
                     <div 
                       key={track.id}
@@ -808,7 +1136,7 @@ export default function App() {
                       <button 
                         onClick={(e) => { e.stopPropagation(); addToPlaylist(track); }}
                         className="absolute bottom-5 right-3 p-1.5 rounded-full bg-[#0D0E12]/80 hover:bg-[#22C55E] text-white opacity-0 group-hover:opacity-100 transition-all z-10 border border-[#242936] hover:border-[#22C55E] backdrop-blur-sm"
-                        title="Add to Chapter"
+                        title="Add to Set Playlist"
                       >
                         <Plus className="w-3 h-3" />
                       </button>
@@ -821,9 +1149,13 @@ export default function App() {
             <ScatterMap tracks={tracks} onPlay={setCurrentTrack} onAddMultiple={addMultipleToPlaylist} />
           ) : (
             <GraphMap 
-              tracks={playlist} 
+              tracks={graphDisplayTracks} 
               libraryTracks={tracks}
               onAddSuggested={addMultipleToPlaylist}
+              transitions={setTransitions}
+              activeTransitionId={activeTransitionId}
+              onTransitionsChange={handleTransitionsChange}
+              onSelectTransition={(t) => setActiveTransitionId(t.id)}
               onPlaySegment={(t, startSec) => {
                 setCurrentTrack(t);
                 setJumpToTime(startSec);
@@ -834,79 +1166,39 @@ export default function App() {
         </div>
       </div>
 
-      {/* RIGHT SIDEBAR */}
-      <div className="w-80 bg-[#161920] border-l border-[#242936] flex flex-col z-10 shrink-0">
-        <div className="p-4 border-b border-[#242936]">
-          <h2 className="font-bold text-sm uppercase tracking-widest flex items-center gap-2"><ListVideo className="w-4 h-4 text-[#A855F7]" /> Set Chapter</h2>
-          
-          <div className="mt-6 flex items-center justify-between text-[11px] text-gray-400 font-mono">
-            <span>Avg BPM: <span className="text-[#22C55E] font-bold">{avgBpm}</span></span>
-            <span>Avg Energy: <span className="text-[#A855F7] font-bold">{avgEnergy.toFixed(1)}</span></span>
-          </div>
-          
-          <div className="mt-3 h-10 flex items-end gap-[1px]">
-            {playlist.length > 0 ? playlist.map((t, i) => (
-              <div key={i} className="flex-1 bg-[#A855F7]/20 rounded-t-sm transition-all hover:bg-[#A855F7]/40 relative group" style={{ height: `${(t.energy / 10) * 100}%` }}>
-                <div className="w-full bg-[#A855F7] rounded-t-sm" style={{ height: '2px' }} />
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-1.5 py-0.5 bg-[#0D0E12] border border-[#242936] rounded text-[9px] font-mono opacity-0 group-hover:opacity-100 whitespace-nowrap z-50">
-                  {t.energy}/10
-                </div>
-              </div>
-            )) : (
-              <div className="w-full h-full border border-dashed border-[#242936] rounded flex items-center justify-center text-[10px] text-gray-600">
-                Empty Curve
-              </div>
-            )}
-          </div>
-        </div>
-        
-        <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {playlist.length === 0 && (
-            <div className="p-4 text-center text-xs text-gray-500">
-              Click the <Plus className="w-3 h-3 inline mx-1" /> icon on a track to add it here.
-            </div>
-          )}
-          {playlist.map((track, i) => (
-            <div key={i} className="flex items-center gap-3 p-2 hover:bg-[#242936] rounded-lg group cursor-pointer transition-colors border border-transparent hover:border-[#242936]">
-              <GripVertical className="w-4 h-4 text-gray-600 cursor-grab shrink-0" />
-              {track.coverArt ? (
-                <img src={track.coverArt} className="w-8 h-8 rounded object-cover" />
-              ) : (
-                <div className="w-8 h-8 rounded bg-[#0D0E12] flex items-center justify-center"><Music className="w-3 h-3 text-gray-600"/></div>
-              )}
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold truncate text-gray-200">{track.title}</p>
-                <p className="text-[9px] text-gray-500 truncate">{track.artist}</p>
-              </div>
-              <div className="text-[9px] font-mono text-right shrink-0">
-                <div className="text-[#22C55E]">{track.key}</div>
-                <div className="text-gray-500">{track.bpm}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* SET PLAYLIST COLLAPSIBLE DRAWER */}
+      <SetPlaylistDrawer 
+        playlist={playlist}
+        onSetPlaylist={setPlaylist}
+        currentTrack={currentTrack}
+        isPlaying={isPlaying}
+        onPlayTrack={setCurrentTrack}
+        isOpen={isSetPlaylistOpen}
+        onToggleOpen={setIsSetPlaylistOpen}
+      />
 
       </div>
 
       {activeTrackForAnalysis && (
-        <AnalyzerPanel 
+        <TrackAnalysisView 
           track={activeTrackForAnalysis}
           onClose={() => setActiveTrackForAnalysis(null)}
-          audioRef={audioRef as React.RefObject<HTMLAudioElement>}
-          duration={duration}
-          currentTime={currentTime}
           onUpdateTrack={updateTrack}
+          currentPlayingTrack={currentTrack}
+          isPlayingGlobal={isPlaying}
         />
       )}
 
-      {/* DJOID LIBRARY MANAGER MODAL */}
+      {/* MuLiMa Pro LIBRARY MANAGER MODAL */}
       <LibraryManagerModal 
         isOpen={isLibraryManagerOpen}
         onClose={() => setIsLibraryManagerOpen(false)}
         tracks={tracks}
         groups={groups}
         onRefreshTracks={loadLibraryFromDisk}
+        onClearLibrary={handleClearLibrary}
+        onOpenAnalysisTrack={(track) => setActiveTrackForAnalysis(track)}
+        initialTab={managerInitialTab}
         onTrackDeleted={(filePath) => {
           setTracks(prev => prev.filter(t => (t.filePath || t.id) !== filePath && t.id !== filePath));
           setPlaylist(prev => prev.filter(t => (t.filePath || t.id) !== filePath && t.id !== filePath));
@@ -936,7 +1228,17 @@ export default function App() {
       />
 
       {/* BOTTOM PLAYER */}
-      <div className="fixed bottom-0 left-0 right-0 h-20 bg-[#161920] border-t border-[#242936] px-6 flex items-center justify-between z-50 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
+      {viewMode === 'graph' ? (
+        <DjSetPlayer 
+          deckATrack={deckATrack}
+          deckBTrack={deckBTrack}
+          activeTransition={activeTransition}
+          transitions={setTransitions}
+          onSelectTransition={(t) => setActiveTransitionId(t.id)}
+          onOpenTrackAnalysis={(t) => setActiveTrackForAnalysis(t)}
+        />
+      ) : (
+        <div className="fixed bottom-0 left-0 right-0 h-20 bg-[#161920] border-t border-[#242936] px-6 flex items-center justify-between z-50 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
         
         <div className="flex items-center gap-4 w-1/4">
           {currentTrack ? (
@@ -1043,6 +1345,7 @@ export default function App() {
         </div>
 
       </div>
+      )}
     </div>
   );
 }
