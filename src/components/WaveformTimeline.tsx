@@ -638,7 +638,7 @@ export default function WaveformTimeline({
                   key={`unified-frame-${trans.id}-${zIdx}`}
                   data-transition-frame="true"
                   data-transition-id={trans.id}
-                  className={`transition-bounding-frame absolute z-30 rounded-2xl border-2 transition-all pointer-events-none backdrop-blur-[1px] flex flex-col justify-between p-3 group/frame ${
+                  className={`transition-bounding-frame absolute z-30 rounded-2xl border-2 transition-all cursor-pointer pointer-events-auto backdrop-blur-[1px] flex flex-col justify-between p-3 group/frame ${
                     isTransitionActive
                       ? 'border-purple-400 bg-purple-950/25 shadow-[0_0_35px_rgba(168,85,247,0.5)] ring-2 ring-purple-500/50'
                       : 'border-cyan-400/90 bg-cyan-950/20 hover:border-purple-400 hover:bg-purple-950/30 shadow-[0_0_25px_rgba(6,182,212,0.25)]'
@@ -651,7 +651,9 @@ export default function WaveformTimeline({
                   }}
                   onClick={() => {
                     onSelectTransition(trans);
+                    if (onSeek) onSeek(zone.overlapStartSec);
                   }}
+                  title="Klicken, um diesen Übergang auszuwählen und direkt anzuspringen"
                 >
                   {/* TOP HEADER: TRANSITION INFO & BUTTONS */}
                   <div className="flex items-center justify-between z-20 gap-2 flex-wrap pointer-events-auto">
@@ -671,6 +673,22 @@ export default function WaveformTimeline({
                           {zone.keyComp.label}
                         </div>
                       )}
+
+                      {/* Cue Transition Immediately */}
+                      <button
+                        id={`btn-cue-transition-${trans.id}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectTransition(trans);
+                          if (onSeek) onSeek(zone.overlapStartSec);
+                          if (!isPlaying && onTogglePlay) onTogglePlay();
+                        }}
+                        className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-500 text-white px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold shadow-md transition-all hover:scale-105 active:scale-95"
+                        title="Übergang sofort anspringen und abspielen"
+                      >
+                        <Play className="w-3 h-3 fill-white" />
+                        <span>Cue Mix</span>
+                      </button>
 
                       {/* Quick Beatgrid Repair Button in Overlap Frame */}
                       <button
@@ -706,11 +724,24 @@ export default function WaveformTimeline({
                   {/* ================= 3-BAND EQ LINES ON BOTH WAVEFORMS ================= */}
                   <div className="flex-1 flex flex-col justify-between py-1 my-1 relative pointer-events-none">
                     
+                    {/* Live Playhead Marker moving through the transition */}
+                    {currentTime >= zone.overlapStartSec && currentTime <= zone.overlapEndSec && (
+                      <div 
+                        className="absolute top-0 bottom-0 w-[2px] bg-white shadow-[0_0_12px_#fff] z-30 pointer-events-none transition-[left] duration-75"
+                        style={{
+                          left: `${Math.max(0, Math.min(100, ((currentTime - zone.overlapStartSec) / zone.overlapDurationSec) * 100))}%`
+                        }}
+                      >
+                        <div className="absolute -top-1 -left-1 w-2.5 h-2.5 rounded-full bg-white shadow-md ring-2 ring-purple-400" />
+                      </div>
+                    )}
+
                     {/* UPPER SECTION: DECK A (OUTGOING TRACK) 3-BAND CURVES */}
                     <div className="relative h-14 w-full flex flex-col justify-center">
                       <div className="absolute top-0 left-1 text-[8px] font-mono font-bold text-gray-300 bg-black/75 px-1.5 py-0.2 rounded border border-white/10 z-10">
                         DECK A ({zone.sourceLayout.track.title})
                       </div>
+
 
                       <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 40">
                         {/* Outgoing Bass Curve (Orange) */}

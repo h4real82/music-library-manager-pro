@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect, ChangeEvent } from 'react';
-import { FolderPlus, Play, Pause, Volume2, Plus, GripVertical, ListVideo, SlidersHorizontal, Activity, Music, Loader2, Database, Trash2, AlertTriangle, Unlock, Edit2, Copy, Check, X, HardDrive, LayoutGrid, List } from 'lucide-react';
+import React, { useState, useRef, useEffect, ChangeEvent, useMemo } from 'react';
+import { FolderPlus, Play, Pause, Volume2, Plus, GripVertical, ListVideo, SlidersHorizontal, Activity, Music, Loader2, Database, Trash2, AlertTriangle, Unlock, Edit2, Copy, Check, X, HardDrive, LayoutGrid, List, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { extractMetadata } from './lib/audioMetadata';
 import { getDB, saveTrack, getAllTracks, clearTracks, savePlaylist, getAllPlaylists, deletePlaylist, saveGroup, getAllGroups, deleteGroup } from './lib/db';
 import ScatterMap from './components/ScatterMap';
@@ -15,6 +15,7 @@ import DjSetPlayer from './components/DjSetPlayer';
 import SetExportModal from './components/SetExportModal';
 import { globalDjSetEngine, SetTimeUpdateEvent } from './lib/djSetAudioEngine';
 import { analyzeTrackSegments, TrackSegment } from './lib/audioAnalysis';
+import { getCamelotColor, getEnergyColor, parseCamelotOrder } from './lib/djMixerLogic';
 import { TrackDef, MulimaGroup, HotCue, PlaylistDef, TransitionConfig } from './types';
 
 export type { HotCue };
@@ -30,11 +31,13 @@ export type Track = TrackDef;
 export interface ListColumnsConfig {
   cover: boolean;
   title: boolean;
+  artist: boolean;
   album: boolean;
   bpm: boolean;
   key: boolean;
   energy: boolean;
   genre: boolean;
+  mood: boolean;
   duration: boolean;
   actions: boolean;
 }
@@ -42,14 +45,19 @@ export interface ListColumnsConfig {
 export const DEFAULT_LIST_COLUMNS: ListColumnsConfig = {
   cover: true,
   title: true,
+  artist: true,
   album: true,
   bpm: true,
   key: true,
   energy: true,
   genre: true,
+  mood: true,
   duration: true,
   actions: true,
 };
+
+export type SortColumn = 'title' | 'artist' | 'album' | 'bpm' | 'key' | 'energy' | 'genre' | 'mood' | 'duration';
+export type SortDirection = 'asc' | 'desc';
 
 
 const camelotKeys = [
@@ -121,12 +129,30 @@ export default function App() {
 
   const selectAllListColumns = () => {
     const all: ListColumnsConfig = {
-      cover: true, title: true, album: true, bpm: true, key: true, energy: true, genre: true, duration: true, actions: true
+      cover: true, title: true, artist: true, album: true, bpm: true, key: true, energy: true, genre: true, mood: true, duration: true, actions: true
     };
     setListColumns(all);
     try {
       localStorage.setItem('mulima_list_columns', JSON.stringify(all));
     } catch {}
+  };
+
+  // List View Sorting State
+  const [sortColumn, setSortColumn] = useState<SortColumn | null>('artist');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+
+  const handleSort = (col: SortColumn) => {
+    if (sortColumn === col) {
+      if (sortDirection === 'asc') {
+        setSortDirection('desc');
+      } else {
+        setSortColumn(null);
+        setSortDirection('asc');
+      }
+    } else {
+      setSortColumn(col);
+      setSortDirection('asc');
+    }
   };
   
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
@@ -658,13 +684,51 @@ export default function App() {
   const avgBpm = playlist.length ? Math.round(playlist.reduce((acc, t) => acc + t.bpm, 0) / playlist.length) : 0;
   const avgEnergy = playlist.length ? playlist.reduce((acc, t) => acc + t.energy, 0) / playlist.length : 0;
 
-  const filteredTracks = tracks.filter(track => {
-    const matchesKey = !selectedKey || track.key === selectedKey;
-    const matchesBPM = track.bpm >= bpmRange[0] && track.bpm <= bpmRange[1];
-    const matchesEnergy = track.energy >= energyRange[0] && track.energy <= energyRange[1];
-    const matchesGroup = !selectedGroup || (track.groups && track.groups.includes(selectedGroup));
-    return matchesKey && matchesBPM && matchesEnergy && matchesGroup;
-  });
+  const filteredTracks = useMemo(() => {
+    const filtered = tracks.filter(track => {
+      const matchesKey = !selectedKey || track.key === selectedKey;
+      const matchesBPM = track.bpm >= bpmRange[0] && track.bpm <= bpmRange[1];
+      const matchesEnergy = track.energy >= energyRange[0] && track.energy <= energyRange[1];
+      const matchesGroup = !selectedGroup || (track.groups && track.groups.includes(selectedGroup));
+      return matchesKey && matchesBPM && matchesEnergy && matchesGroup;
+    });
+
+    if (!sortColumn) return filtered;
+
+    return [...filtered].sort((a, b) => {
+      let cmp = 0;
+      switch (sortColumn) {
+        case 'title':
+          cmp = (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' });
+          break;
+        case 'artist':
+          cmp = (a.artist || '').localeCompare(b.artist || '', undefined, { sensitivity: 'base' });
+          break;
+        case 'album':
+          cmp = (a.album || '').localeCompare(b.album || '', undefined, { sensitivity: 'base' });
+          break;
+        case 'bpm':
+          cmp = (a.bpm || 0) - (b.bpm || 0);
+          break;
+        case 'key':
+          cmp = parseCamelotOrder(a.key) - parseCamelotOrder(b.key);
+          break;
+        case 'energy':
+          cmp = (a.energy || 0) - (b.energy || 0);
+          break;
+        case 'genre':
+          cmp = (a.genre || a.style || '').localeCompare(b.genre || b.style || '', undefined, { sensitivity: 'base' });
+          break;
+        case 'mood':
+          cmp = (a.mood || '').localeCompare(b.mood || '', undefined, { sensitivity: 'base' });
+          break;
+        case 'duration':
+          cmp = (a.duration || 0) - (b.duration || 0);
+          break;
+      }
+      return sortDirection === 'asc' ? cmp : -cmp;
+    });
+  }, [tracks, selectedKey, bpmRange, energyRange, selectedGroup, sortColumn, sortDirection]);
 
   const activeTransition = setTransitions.find(t => t.id === activeTransitionId) || setTransitions[0] || null;
   const graphDisplayTracks = playlist.length > 0 ? playlist : tracks.slice(0, 8);
@@ -740,7 +804,7 @@ export default function App() {
   };
 
   return (
-    <div className={`flex flex-col h-screen bg-[#0D0E12] text-white font-sans overflow-hidden ${viewMode === 'graph' ? 'pb-32' : 'pb-20'} selection:bg-[#A855F7]/30`}>
+    <div className={`flex flex-col h-screen bg-[#0D0E12] text-white font-sans overflow-hidden ${viewMode === 'graph' ? 'pb-40' : 'pb-24'} selection:bg-[#A855F7]/30`}>
       
       <div className="flex flex-1 overflow-hidden relative">
         <input 
@@ -970,15 +1034,17 @@ export default function App() {
                       </button>
                     </div>
 
-                    <div className="flex flex-col gap-1 max-h-64 overflow-y-auto py-1 text-xs">
+                    <div className="flex flex-col gap-1 max-h-72 overflow-y-auto py-1 text-xs">
                       {[
                         { key: 'cover' as const, label: 'Cover-Thumbnail' },
-                        { key: 'title' as const, label: 'Titel & Interpret' },
+                        { key: 'title' as const, label: 'Titel' },
+                        { key: 'artist' as const, label: 'Interpret' },
                         { key: 'album' as const, label: 'Album & Jahr' },
                         { key: 'bpm' as const, label: 'BPM (Tempo)' },
-                        { key: 'key' as const, label: 'Tonart (Key)' },
+                        { key: 'key' as const, label: 'Tonart (Camelot Key)' },
                         { key: 'energy' as const, label: 'Energy-Level' },
-                        { key: 'genre' as const, label: 'Genre & Mood' },
+                        { key: 'genre' as const, label: 'Genre / Stil' },
+                        { key: 'mood' as const, label: 'Mood / Stimmung' },
                         { key: 'duration' as const, label: 'Laufzeit / Dauer' },
                         { key: 'actions' as const, label: 'Aktionen (Studio, +)' },
                       ].map(col => (
@@ -1007,7 +1073,7 @@ export default function App() {
 
         <div className="flex-1 relative overflow-hidden flex flex-col bg-[#0D0E12]">
           {viewMode === 'list' ? (
-            <div className="flex-1 p-5 overflow-y-auto relative">
+            <div className="flex-1 p-5 pb-28 overflow-y-auto relative">
               {tracks.length === 0 && !isScanning ? (
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-600">
                   <FolderPlus className="w-16 h-16 mb-4 opacity-20" />
@@ -1019,13 +1085,160 @@ export default function App() {
                     <thead>
                       <tr className="border-b border-[#242936] bg-[#161920] text-gray-400 font-mono text-[11px] uppercase tracking-wider select-none">
                         {listColumns.cover && <th className="py-3 px-3 w-14 text-center">Cover</th>}
-                        {listColumns.title && <th className="py-3 px-4">Titel & Interpret</th>}
-                        {listColumns.album && <th className="py-3 px-4">Album & Jahr</th>}
-                        {listColumns.bpm && <th className="py-3 px-3 text-center">BPM</th>}
-                        {listColumns.key && <th className="py-3 px-3 text-center">Key</th>}
-                        {listColumns.energy && <th className="py-3 px-3 text-center">Energy</th>}
-                        {listColumns.genre && <th className="py-3 px-4">Genre / Mood</th>}
-                        {listColumns.duration && <th className="py-3 px-3 text-right">Dauer</th>}
+                        
+                        {listColumns.title && (
+                          <th 
+                            onClick={() => handleSort('title')}
+                            className="py-3 px-4 cursor-pointer hover:text-white transition-colors select-none"
+                            title="Nach Titel sortieren (A-Z / Z-A)"
+                          >
+                            <div className="flex items-center gap-1.5">
+                              <span>Titel</span>
+                              {sortColumn === 'title' ? (
+                                sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-cyan-400" /> : <ArrowDown className="w-3.5 h-3.5 text-cyan-400" />
+                              ) : (
+                                <ArrowUpDown className="w-3 h-3 text-gray-600 opacity-60 hover:opacity-100" />
+                              )}
+                            </div>
+                          </th>
+                        )}
+
+                        {listColumns.artist && (
+                          <th 
+                            onClick={() => handleSort('artist')}
+                            className="py-3 px-4 cursor-pointer hover:text-white transition-colors select-none"
+                            title="Nach Interpret sortieren (A-Z / Z-A)"
+                          >
+                            <div className="flex items-center gap-1.5">
+                              <span>Interpret</span>
+                              {sortColumn === 'artist' ? (
+                                sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-cyan-400" /> : <ArrowDown className="w-3.5 h-3.5 text-cyan-400" />
+                              ) : (
+                                <ArrowUpDown className="w-3 h-3 text-gray-600 opacity-60 hover:opacity-100" />
+                              )}
+                            </div>
+                          </th>
+                        )}
+
+                        {listColumns.album && (
+                          <th 
+                            onClick={() => handleSort('album')}
+                            className="py-3 px-4 cursor-pointer hover:text-white transition-colors select-none"
+                            title="Nach Album & Jahr sortieren"
+                          >
+                            <div className="flex items-center gap-1.5">
+                              <span>Album & Jahr</span>
+                              {sortColumn === 'album' ? (
+                                sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-cyan-400" /> : <ArrowDown className="w-3.5 h-3.5 text-cyan-400" />
+                              ) : (
+                                <ArrowUpDown className="w-3 h-3 text-gray-600 opacity-60 hover:opacity-100" />
+                              )}
+                            </div>
+                          </th>
+                        )}
+
+                        {listColumns.bpm && (
+                          <th 
+                            onClick={() => handleSort('bpm')}
+                            className="py-3 px-3 text-center cursor-pointer hover:text-white transition-colors select-none"
+                            title="Nach BPM Tempo sortieren"
+                          >
+                            <div className="flex items-center justify-center gap-1">
+                              <span>BPM</span>
+                              {sortColumn === 'bpm' ? (
+                                sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-cyan-400" /> : <ArrowDown className="w-3.5 h-3.5 text-cyan-400" />
+                              ) : (
+                                <ArrowUpDown className="w-3 h-3 text-gray-600 opacity-60" />
+                              )}
+                            </div>
+                          </th>
+                        )}
+
+                        {listColumns.key && (
+                          <th 
+                            onClick={() => handleSort('key')}
+                            className="py-3 px-3 text-center cursor-pointer hover:text-white transition-colors select-none"
+                            title="Nach Camelot Tonart sortieren"
+                          >
+                            <div className="flex items-center justify-center gap-1">
+                              <span>Key</span>
+                              {sortColumn === 'key' ? (
+                                sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-purple-400" /> : <ArrowDown className="w-3.5 h-3.5 text-purple-400" />
+                              ) : (
+                                <ArrowUpDown className="w-3 h-3 text-gray-600 opacity-60" />
+                              )}
+                            </div>
+                          </th>
+                        )}
+
+                        {listColumns.energy && (
+                          <th 
+                            onClick={() => handleSort('energy')}
+                            className="py-3 px-3 text-center cursor-pointer hover:text-white transition-colors select-none"
+                            title="Nach Energy-Level sortieren"
+                          >
+                            <div className="flex items-center justify-center gap-1">
+                              <span>Energy</span>
+                              {sortColumn === 'energy' ? (
+                                sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                              ) : (
+                                <ArrowUpDown className="w-3 h-3 text-gray-600 opacity-60" />
+                              )}
+                            </div>
+                          </th>
+                        )}
+
+                        {listColumns.genre && (
+                          <th 
+                            onClick={() => handleSort('genre')}
+                            className="py-3 px-4 cursor-pointer hover:text-white transition-colors select-none"
+                            title="Nach Genre sortieren"
+                          >
+                            <div className="flex items-center gap-1.5">
+                              <span>Genre</span>
+                              {sortColumn === 'genre' ? (
+                                sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-cyan-400" /> : <ArrowDown className="w-3.5 h-3.5 text-cyan-400" />
+                              ) : (
+                                <ArrowUpDown className="w-3 h-3 text-gray-600 opacity-60" />
+                              )}
+                            </div>
+                          </th>
+                        )}
+
+                        {listColumns.mood && (
+                          <th 
+                            onClick={() => handleSort('mood')}
+                            className="py-3 px-4 cursor-pointer hover:text-white transition-colors select-none"
+                            title="Nach Mood / Stimmung sortieren"
+                          >
+                            <div className="flex items-center gap-1.5">
+                              <span>Mood</span>
+                              {sortColumn === 'mood' ? (
+                                sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-purple-400" /> : <ArrowDown className="w-3.5 h-3.5 text-purple-400" />
+                              ) : (
+                                <ArrowUpDown className="w-3 h-3 text-gray-600 opacity-60" />
+                              )}
+                            </div>
+                          </th>
+                        )}
+
+                        {listColumns.duration && (
+                          <th 
+                            onClick={() => handleSort('duration')}
+                            className="py-3 px-3 text-right cursor-pointer hover:text-white transition-colors select-none"
+                            title="Nach Laufzeit sortieren"
+                          >
+                            <div className="flex items-center justify-end gap-1">
+                              <span>Dauer</span>
+                              {sortColumn === 'duration' ? (
+                                sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-cyan-400" /> : <ArrowDown className="w-3.5 h-3.5 text-cyan-400" />
+                              ) : (
+                                <ArrowUpDown className="w-3 h-3 text-gray-600 opacity-60" />
+                              )}
+                            </div>
+                          </th>
+                        )}
+
                         {listColumns.actions && <th className="py-3 px-4 text-right">Aktionen</th>}
                       </tr>
                     </thead>
@@ -1035,6 +1248,9 @@ export default function App() {
                         const durationFormatted = track.duration
                           ? `${Math.floor(track.duration / 60)}:${Math.floor(track.duration % 60).toString().padStart(2, '0')}`
                           : '--:--';
+
+                        const camelotCol = getCamelotColor(track.key);
+                        const energyCol = getEnergyColor(track.energy);
 
                         return (
                           <tr
@@ -1084,13 +1300,19 @@ export default function App() {
                               </td>
                             )}
 
-                            {/* Title & Artist */}
+                            {/* Title */}
                             {listColumns.title && (
-                              <td className="py-2.5 px-4 min-w-[200px]">
+                              <td className="py-2.5 px-4 min-w-[180px]">
                                 <div className="font-bold text-white text-xs truncate max-w-xs group-hover:text-cyan-300 transition-colors">
                                   {track.title}
                                 </div>
-                                <div className="text-gray-400 text-[11px] truncate max-w-xs">
+                              </td>
+                            )}
+
+                            {/* Artist (Separated Column) */}
+                            {listColumns.artist && (
+                              <td className="py-2.5 px-4 min-w-[160px]">
+                                <div className="text-gray-300 text-[11px] font-medium truncate max-w-xs group-hover:text-white transition-colors">
                                   {track.artist || 'Unbekannter Künstler'}
                                 </div>
                               </td>
@@ -1113,35 +1335,55 @@ export default function App() {
                               </td>
                             )}
 
-                            {/* Camelot Key */}
+                            {/* Camelot Key (Color-Coded to Camelot Diagram) */}
                             {listColumns.key && (
                               <td className="py-2.5 px-3 text-center">
-                                <span className="px-2 py-0.5 rounded-full font-mono font-bold text-[11px] bg-[#A855F7]/15 text-[#A855F7] border border-[#A855F7]/30">
-                                  {track.key}
+                                <span 
+                                  className="px-2.5 py-0.5 rounded-full font-mono font-bold text-[11px] border shadow-sm"
+                                  style={{
+                                    backgroundColor: `${camelotCol}20`,
+                                    borderColor: `${camelotCol}60`,
+                                    color: camelotCol
+                                  }}
+                                  title={`Camelot Tonart: ${track.key || '—'}`}
+                                >
+                                  {track.key || '—'}
                                 </span>
                               </td>
                             )}
 
-                            {/* Energy Level */}
+                            {/* Energy Level (Color-Coded to Left Sidebar Filter) */}
                             {listColumns.energy && (
                               <td className="py-2.5 px-3 text-center">
-                                <span className="px-2 py-0.5 rounded-full font-mono font-bold text-[10px] bg-[#F59E0B]/15 text-[#F59E0B] border border-[#F59E0B]/30">
+                                <span 
+                                  className="px-2 py-0.5 rounded-full font-mono font-bold text-[10px] border shadow-sm"
+                                  style={{
+                                    backgroundColor: `${energyCol}20`,
+                                    borderColor: `${energyCol}60`,
+                                    color: energyCol
+                                  }}
+                                  title={`Energy-Level: ${track.energy}/10`}
+                                >
                                   ⚡ {track.energy}/10
                                 </span>
                               </td>
                             )}
 
-                            {/* Genre / Mood */}
+                            {/* Genre (Separated Column) */}
                             {listColumns.genre && (
-                              <td className="py-2.5 px-4 text-gray-400 text-[11px]">
-                                <div className="truncate max-w-[140px] font-medium text-gray-300">
+                              <td className="py-2.5 px-4 text-gray-300 text-[11px] min-w-[130px]">
+                                <div className="truncate max-w-[140px] font-medium">
                                   {track.genre || track.style || 'Electronic'}
                                 </div>
-                                {track.mood && (
-                                  <div className="text-gray-500 text-[10px] truncate max-w-[140px]">
-                                    {track.mood}
-                                  </div>
-                                )}
+                              </td>
+                            )}
+
+                            {/* Mood (Separated Column) */}
+                            {listColumns.mood && (
+                              <td className="py-2.5 px-4 text-gray-400 text-[11px] min-w-[130px]">
+                                <div className="truncate max-w-[140px] italic">
+                                  {track.mood || '—'}
+                                </div>
                               </td>
                             )}
 

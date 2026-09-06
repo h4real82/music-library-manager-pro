@@ -522,7 +522,7 @@ export default function GraphMap({
       </div>
 
       {graphSubMode === 'timeline' ? (
-        <div className="absolute inset-0 pt-16 flex flex-col">
+        <div className="absolute inset-0 pt-16 pb-[168px] flex flex-col">
           <WaveformTimeline
             tracks={tracks}
             transitions={localTransitions}

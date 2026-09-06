@@ -494,3 +494,76 @@ export function generateHarmonizedSet(rawTracks: TrackDef[]): {
   return { orderedTracks: ordered, transitions };
 }
 
+/**
+ * 12 Camelot positions matching CamelotWheel.tsx
+ */
+export const CAMELOT_KEY_COLORS: Record<string, string> = {
+  '12B': '#3B82F6', '12A': '#3B82F6',
+  '1B': '#06B6D4',  '1A': '#06B6D4',
+  '2B': '#0D9488',  '2A': '#0D9488',
+  '3B': '#10B981',  '3A': '#10B981',
+  '4B': '#84CC16',  '4A': '#84CC16',
+  '5B': '#EAB308',  '5A': '#EAB308',
+  '6B': '#F59E0B',  '6A': '#F59E0B',
+  '7B': '#F97316',  '7A': '#F97316',
+  '8B': '#EF4444',  '8A': '#EF4444',
+  '9B': '#EC4899',  '9A': '#EC4899',
+  '10B': '#D946EF', '10A': '#D946EF',
+  '11B': '#8B5CF6', '11A': '#8B5CF6',
+};
+
+/**
+ * Returns matching Camelot Wheel diagram color for any key badge
+ */
+export function getCamelotColor(key?: string): string {
+  if (!key) return '#A855F7';
+  const clean = key.trim().toUpperCase();
+  if (CAMELOT_KEY_COLORS[clean]) return CAMELOT_KEY_COLORS[clean];
+
+  // Try parsing number + letter if formatting varies (e.g. "8 a" or "8m")
+  const match = clean.match(/^(\d+)\s*([ABM])/);
+  if (match) {
+    const num = match[1];
+    const letter = match[2] === 'M' ? 'A' : match[2];
+    const normalized = `${num}${letter}`;
+    if (CAMELOT_KEY_COLORS[normalized]) return CAMELOT_KEY_COLORS[normalized];
+  }
+  return '#A855F7';
+}
+
+/**
+ * Returns numeric value for Camelot order (1A, 1B, 2A, 2B... 12B) for sorting
+ */
+export function parseCamelotOrder(key?: string): number {
+  if (!key) return 999;
+  const match = key.trim().match(/^(\d+)\s*([ABM]?)/i);
+  if (!match) return 900;
+  const num = parseInt(match[1], 10);
+  const letter = (match[2] || 'A').toUpperCase();
+  return num * 2 + (letter === 'B' ? 1 : 0);
+}
+
+/**
+ * 10-level energy color scale matching DjFilters.tsx left sidebar
+ */
+export const ENERGY_LEVEL_COLORS = [
+  '#06B6D4', // 1 - Cyan
+  '#0EA5E9', // 2 - Sky
+  '#3B82F6', // 3 - Blue
+  '#10B981', // 4 - Emerald
+  '#22C55E', // 5 - Green
+  '#EAB308', // 6 - Yellow
+  '#F59E0B', // 7 - Amber
+  '#F97316', // 8 - Orange
+  '#EC4899', // 9 - Pink
+  '#F43F5E', // 10 - Rose
+];
+
+/**
+ * Returns matching energy color corresponding to the left sidebar filter
+ */
+export function getEnergyColor(energy?: number): string {
+  if (energy === undefined || energy === null || isNaN(energy)) return '#F59E0B';
+  const level = Math.max(1, Math.min(10, Math.round(energy)));
+  return ENERGY_LEVEL_COLORS[level - 1] || '#F59E0B';
+}

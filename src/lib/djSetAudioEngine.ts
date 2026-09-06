@@ -439,17 +439,24 @@ export class DjSetAudioEngine {
       const startSec = accumulatedTime;
       const endSec = startSec + duration;
 
+      const mixoutSec = trans?.sourceTimeSec !== undefined
+        ? trans.sourceTimeSec
+        : Math.max(0, duration - transDurationSec);
+
+      const transStartSec = nextTrack ? startSec + mixoutSec : undefined;
+      const transEndSec = nextTrack && transStartSec !== undefined ? transStartSec + transDurationSec : undefined;
+
       layouts.push({
         track,
         startSec,
         durationSec: duration,
         endSec,
         transition: trans,
-        transitionStartSec: nextTrack ? endSec - transDurationSec : undefined,
-        transitionEndSec: nextTrack ? endSec : undefined,
+        transitionStartSec: transStartSec,
+        transitionEndSec: transEndSec,
       });
 
-      accumulatedTime = nextTrack ? endSec - transDurationSec : endSec;
+      accumulatedTime = nextTrack && transStartSec !== undefined ? transStartSec : endSec;
     }
 
     // Find active track/transition

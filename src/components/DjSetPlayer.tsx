@@ -121,12 +121,16 @@ export default function DjSetPlayer({
 
   // Derive real-time values directly from live set playback event to avoid cascading effect loops
   const isSetPlaying = Boolean(liveSetEvent?.isPlaying);
-  const activeCrossfaderProgress = isSetPlaying
+  const activeCrossfaderProgress = (isSetPlaying && !isAutoTransitioning)
     ? (liveSetEvent?.crossfaderPosition ?? 0)
     : crossfaderProgress;
-  const activeTransitionState = isSetPlaying
+  const activeTransitionState = (isSetPlaying && !isAutoTransitioning)
     ? (liveSetEvent?.transitionState ?? transitionState)
     : transitionState;
+
+  // Real-time On-Air Deck Activity Status (indicates which deck is currently outputting sound)
+  const isDeckAActive = isPlaying && (activeCrossfaderProgress < 0.98);
+  const isDeckBActive = isPlaying && (activeCrossfaderProgress > 0.02);
 
   // Sync isPlaying flag from set engine
   useEffect(() => {
@@ -293,15 +297,21 @@ export default function DjSetPlayer({
   const eqHighB = killsB.high ? 0 : (activeTransitionState?.deckB.eqHigh ?? 0.0);
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 h-32 bg-[#0F1116] border-t border-[#242936] px-6 py-2 flex items-center justify-between z-50 shadow-[0_-12px_48px_rgba(0,0,0,0.85)] select-none">
+    <div className="fixed bottom-0 left-0 right-0 h-[168px] bg-[#0F1116] border-t border-[#242936] px-6 py-2 flex items-center justify-between z-50 shadow-[0_-12px_48px_rgba(0,0,0,0.9)] select-none">
       
       {/* ================= LEFT: DECK A (OUTGOING / LIVE PLAYING) ================= */}
       <div className="flex items-center gap-4 w-[28%] min-w-[280px]">
         {deckATrack ? (
-          <div className="flex items-center gap-3.5 w-full bg-[#161920]/80 border border-cyan-500/30 rounded-xl p-2.5 shadow-md shadow-cyan-950/20">
+          <div className={`flex items-center gap-3.5 w-full bg-[#161920]/80 border rounded-xl p-2.5 shadow-md transition-all duration-300 ${
+            isDeckAActive ? 'border-cyan-500/60 shadow-cyan-950/40 ring-1 ring-cyan-500/30' : 'border-[#242936] shadow-black/40'
+          }`}>
             {/* Artwork */}
             <div 
-              className="relative w-14 h-14 rounded-lg overflow-hidden border border-[#242936] flex-shrink-0 cursor-pointer group"
+              className={`relative w-14 h-14 rounded-lg overflow-hidden border flex-shrink-0 cursor-pointer group transition-all duration-300 ${
+                isDeckAActive 
+                  ? 'border-cyan-400 ring-2 ring-cyan-400/80 shadow-[0_0_15px_rgba(6,182,212,0.5)]' 
+                  : 'border-[#242936]'
+              }`}
               onClick={() => onOpenTrackAnalysis && onOpenTrackAnalysis(deckATrack)}
               title="Open Track Studio"
             >
@@ -315,13 +325,32 @@ export default function DjSetPlayer({
               <div className="absolute top-1 left-1 px-1 py-0.2 bg-black/80 rounded text-[9px] font-black text-cyan-400 font-mono">
                 DECK A
               </div>
+
+              {/* Active Playing Indicator on Cover */}
+              {isDeckAActive && (
+                <div className="absolute bottom-1 right-1 px-1 py-0.5 bg-black/90 rounded border border-cyan-400/60 flex items-end gap-0.5 h-3 shadow-md" title="Deck A spielt aktuell Ton ab">
+                  <span className="w-0.5 bg-cyan-400 rounded-full animate-[pulse_0.6s_infinite_ease-in-out]" style={{ height: '60%' }} />
+                  <span className="w-0.5 bg-cyan-300 rounded-full animate-[pulse_0.4s_infinite_ease-in-out]" style={{ height: '100%' }} />
+                  <span className="w-0.5 bg-cyan-400 rounded-full animate-[pulse_0.7s_infinite_ease-in-out]" style={{ height: '80%' }} />
+                </div>
+              )}
             </div>
 
             {/* Track Info & Live Interactive 3-Band EQ */}
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-1">
-                <span className="text-xs font-bold text-white truncate max-w-[150px]">{deckATrack.title}</span>
+                <span className="text-xs font-bold text-white truncate max-w-[130px]">{deckATrack.title}</span>
                 <div className="flex items-center gap-1">
+                  {isDeckAActive ? (
+                    <span className="text-[9px] font-mono font-black px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400/60 flex items-center gap-1 shadow-[0_0_8px_rgba(6,182,212,0.4)] animate-pulse">
+                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                      <span>ON AIR</span>
+                    </span>
+                  ) : (
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-black/40 text-gray-500 border border-[#242936]">
+                      STANDBY
+                    </span>
+                  )}
                   <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
                     {deckATrack.bpm} BPM
                   </span>
@@ -411,16 +440,24 @@ export default function DjSetPlayer({
       </div>
 
       {/* ================= CENTER: TRANSITION HUB, CROSSFADER & ACTIONS ================= */}
-      <div className="flex flex-col items-center justify-between h-full flex-1 max-w-2xl px-4">
+      <div className="flex flex-col items-center justify-between h-[132px] flex-1 max-w-2xl px-4">
         
         {/* Top bar: Preset Badge, Phase & Transition Jumper */}
         <div className="flex items-center justify-between w-full">
           <div className="flex items-center gap-2">
             <button 
               disabled={currentTransitionIdx <= 0}
-              onClick={() => onSelectTransition(transitions[currentTransitionIdx - 1])}
+              onClick={() => {
+                const prev = transitions[currentTransitionIdx - 1];
+                if (prev) {
+                  onSelectTransition(prev);
+                  if (prev.sourceTimeSec !== undefined) {
+                    globalDjSetEngine.seekSet(prev.sourceTimeSec);
+                  }
+                }
+              }}
               className="p-1 rounded text-gray-500 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
-              title="Vorheriger Übergang"
+              title="Vorheriger Übergang (mit Cue Seek)"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -438,9 +475,17 @@ export default function DjSetPlayer({
             </div>
             <button 
               disabled={currentTransitionIdx >= transitions.length - 1}
-              onClick={() => onSelectTransition(transitions[currentTransitionIdx + 1])}
+              onClick={() => {
+                const next = transitions[currentTransitionIdx + 1];
+                if (next) {
+                  onSelectTransition(next);
+                  if (next.sourceTimeSec !== undefined) {
+                    globalDjSetEngine.seekSet(next.sourceTimeSec);
+                  }
+                }
+              }}
               className="p-1 rounded text-gray-500 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
-              title="Nächster Übergang"
+              title="Nächster Übergang (mit Cue Seek)"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
@@ -506,8 +551,8 @@ export default function DjSetPlayer({
         </div>
 
         {/* Center: Interactive & Real-Time Animated Crossfader Rail */}
-        <div className="w-full flex flex-col items-center gap-1 my-1">
-          <div className="relative w-full h-8 bg-[#0D0E12] border border-[#242936] rounded-lg flex items-center px-2 group">
+        <div className="w-full flex flex-col items-center gap-0.5 my-0.5">
+          <div className="relative w-full h-7 bg-[#0D0E12] border border-[#242936] rounded-lg flex items-center px-2 group">
             {/* Background Curve Visualizer */}
             <div className="absolute inset-0 opacity-15 pointer-events-none flex items-center px-4">
               <div className="w-1/2 h-full flex items-center border-r border-gray-600/40">
@@ -558,7 +603,7 @@ export default function DjSetPlayer({
         </div>
 
         {/* Bottom Playback & Export Actions Bar */}
-        <div className="flex items-center justify-between w-full">
+        <div className="flex items-center justify-between w-full pt-0.5 pb-0.5">
           <div className="flex items-center gap-2">
             <button 
               onClick={() => {
@@ -629,12 +674,24 @@ export default function DjSetPlayer({
       {/* ================= RIGHT: DECK B (INCOMING / NEXT TRACK) ================= */}
       <div className="flex items-center gap-4 w-[28%] min-w-[280px]">
         {deckBTrack ? (
-          <div className="flex items-center gap-3.5 w-full bg-[#161920]/80 border border-emerald-500/30 rounded-xl p-2.5 shadow-md shadow-emerald-950/20">
+          <div className={`flex items-center gap-3.5 w-full bg-[#161920]/80 border rounded-xl p-2.5 shadow-md transition-all duration-300 ${
+            isDeckBActive ? 'border-emerald-500/60 shadow-emerald-950/40 ring-1 ring-emerald-500/30' : 'border-[#242936] shadow-black/40'
+          }`}>
             {/* Live Interactive 3-Band EQ & Track Info */}
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-1">
-                <span className="text-xs font-bold text-white truncate max-w-[150px]">{deckBTrack.title}</span>
+                <span className="text-xs font-bold text-white truncate max-w-[130px]">{deckBTrack.title}</span>
                 <div className="flex items-center gap-1">
+                  {isDeckBActive ? (
+                    <span className="text-[9px] font-mono font-black px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/60 flex items-center gap-1 shadow-[0_0_8px_rgba(16,185,129,0.4)] animate-pulse">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                      <span>ON AIR</span>
+                    </span>
+                  ) : (
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-black/40 text-gray-500 border border-[#242936]">
+                      STANDBY
+                    </span>
+                  )}
                   <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
                     {deckBTrack.bpm} BPM
                   </span>
@@ -718,7 +775,11 @@ export default function DjSetPlayer({
 
             {/* Artwork */}
             <div 
-              className="relative w-14 h-14 rounded-lg overflow-hidden border border-[#242936] flex-shrink-0 cursor-pointer group"
+              className={`relative w-14 h-14 rounded-lg overflow-hidden border flex-shrink-0 cursor-pointer group transition-all duration-300 ${
+                isDeckBActive 
+                  ? 'border-emerald-400 ring-2 ring-emerald-400/80 shadow-[0_0_15px_rgba(16,185,129,0.5)]' 
+                  : 'border-[#242936]'
+              }`}
               onClick={() => onOpenTrackAnalysis && onOpenTrackAnalysis(deckBTrack)}
               title="Open Track Studio"
             >
@@ -732,6 +793,15 @@ export default function DjSetPlayer({
               <div className="absolute top-1 right-1 px-1 py-0.2 bg-black/80 rounded text-[9px] font-black text-emerald-400 font-mono">
                 DECK B
               </div>
+
+              {/* Active Playing Indicator on Cover */}
+              {isDeckBActive && (
+                <div className="absolute bottom-1 left-1 px-1 py-0.5 bg-black/90 rounded border border-emerald-400/60 flex items-end gap-0.5 h-3 shadow-md" title="Deck B spielt aktuell Ton ab">
+                  <span className="w-0.5 bg-emerald-400 rounded-full animate-[pulse_0.6s_infinite_ease-in-out]" style={{ height: '60%' }} />
+                  <span className="w-0.5 bg-emerald-300 rounded-full animate-[pulse_0.4s_infinite_ease-in-out]" style={{ height: '100%' }} />
+                  <span className="w-0.5 bg-emerald-400 rounded-full animate-[pulse_0.7s_infinite_ease-in-out]" style={{ height: '80%' }} />
+                </div>
+              )}
             </div>
           </div>
         ) : (
@@ -740,6 +810,7 @@ export default function DjSetPlayer({
           </div>
         )}
       </div>
+
 
       {/* Beatgrid Repair Studio Modal */}
       {repairModalTrack && (
