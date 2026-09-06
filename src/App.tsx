@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect, ChangeEvent, useMemo } from 'react';
-import { FolderPlus, Play, Pause, Volume2, Plus, GripVertical, ListVideo, SlidersHorizontal, Activity, Music, Loader2, Database, Trash2, AlertTriangle, Unlock, Edit2, Copy, Check, X, HardDrive, LayoutGrid, List, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { FolderPlus, Play, Pause, Volume2, Plus, GripVertical, ListVideo, SlidersHorizontal, Activity, Music, Loader2, Database, Trash2, AlertTriangle, Unlock, Edit2, Copy, Check, X, HardDrive, LayoutGrid, List, ArrowUp, ArrowDown, ArrowUpDown, Grid3X3 } from 'lucide-react';
 import { extractMetadata } from './lib/audioMetadata';
 import { getDB, saveTrack, getAllTracks, clearTracks, savePlaylist, getAllPlaylists, deletePlaylist, saveGroup, getAllGroups, deleteGroup } from './lib/db';
-import ScatterMap from './components/ScatterMap';
+import TrackMapper from './components/TrackMapper';
 import GraphMap from './components/GraphMap';
 import AnalyzerPanel from './components/AnalyzerPanel';
 import TrackAnalysisView from './components/TrackAnalysisView';
@@ -77,7 +77,7 @@ export default function App() {
   const [isLibraryManagerOpen, setIsLibraryManagerOpen] = useState(false);
   const [managerInitialTab, setManagerInitialTab] = useState<'tracks' | 'import' | 'groups' | 'organize'>('tracks');
   const [isSetPlaylistOpen, setIsSetPlaylistOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<'grid' | 'list' | 'scatter' | 'graph'>('grid');
+  const [viewMode, setViewMode] = useState<'grid' | 'list' | 'mapper' | 'scatter' | 'graph'>('grid');
   
   // DJ Set Transitions State
   const [setTransitions, setSetTransitions] = useState<TransitionConfig[]>(() => {
@@ -954,9 +954,9 @@ export default function App() {
                 <>
                   <List className="w-4 h-4 text-cyan-400" /> List View
                 </>
-              ) : viewMode === 'scatter' ? (
+              ) : viewMode === 'mapper' || (viewMode as string) === 'scatter' ? (
                 <>
-                  <Activity className="w-4 h-4 text-[#06B6D4]" /> Scatter Map
+                  <Grid3X3 className="w-4 h-4 text-cyan-400" /> Mapper View
                 </>
               ) : viewMode === 'graph' ? (
                 <>
@@ -993,11 +993,13 @@ export default function App() {
               <span>List View</span>
             </button>
             <button 
-              onClick={() => setViewMode('scatter')} 
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${viewMode === 'scatter' ? 'bg-[#242936] text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
-              title="Scatter Map (2D Harmonische BPM/Energy-Karte)"
+              id="btn-view-mapper"
+              onClick={() => setViewMode('mapper')} 
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 ${viewMode === 'mapper' || (viewMode as string) === 'scatter' ? 'bg-[#242936] text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
+              title="Mapper View (2D konfigurierbare Raster-Matrix nach BPM, Key, Energy, Genre, Mood)"
             >
-              Scatter
+              <Grid3X3 className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Mapper</span>
             </button>
             <button 
               id="btn-view-graph"
@@ -1493,8 +1495,14 @@ export default function App() {
                 </div>
               )}
             </div>
-          ) : viewMode === 'scatter' ? (
-            <ScatterMap tracks={tracks} onPlay={setCurrentTrack} onAddMultiple={addMultipleToPlaylist} />
+          ) : viewMode === 'mapper' || (viewMode as string) === 'scatter' ? (
+            <TrackMapper 
+              tracks={tracks} 
+              onPlay={setCurrentTrack} 
+              onAddMultiple={addMultipleToPlaylist}
+              currentPlayingTrack={currentTrack}
+              isPlaying={isPlaying}
+            />
           ) : (
             <GraphMap 
               tracks={graphDisplayTracks} 
