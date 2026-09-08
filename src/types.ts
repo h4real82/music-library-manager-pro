@@ -247,11 +247,15 @@ export interface DuplicateGroup {
 
 // DJ Set Transitions & Presets
 export type TransitionPresetType = 
-  | 'eq-blend'      // 1. Klassischer EQ-Wechsel (Equalizer Blend)
-  | 'bass-swap'     // 2. Bass-Swap (Instant Low-End Switch)
-  | 'filter-sweep'  // 3. Filter-Sweep (HPF / LPF Transition)
-  | 'cut-drop'      // 4. Cut / Drop (Fader Slam)
-  | 'equal-power';  // 5. Volume-Fading mit Kurven (Gain Crossfade)
+  | 'eq-blend'           // 1. Klassischer EQ-Wechsel (Equalizer Blend)
+  | 'bass-swap'          // 2. Bass-Swap (Instant Low-End Switch)
+  | 'filter-sweep'       // 3. Filter-Sweep (HPF / LPF Transition)
+  | 'cut-drop'           // 4. Cut / Drop (Fader Slam)
+  | 'equal-power'        // 5. Volume-Fading mit Kurven (Gain Crossfade)
+  | 'reverb-rise'        // 6. Reverb Wash / FX Riser Build
+  | 'vocal-swap'         // 7. Mid/Vocal Solo Swap
+  | 'progressive-filter' // 8. Progressive Double Filter Sweep
+  | 'ambient-fade';      // 9. Ambient Slow Crossfade
 
 export interface EnvelopePoint {
   id: string;

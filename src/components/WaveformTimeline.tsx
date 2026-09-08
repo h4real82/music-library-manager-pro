@@ -3,6 +3,7 @@ import { Play, Pause, RotateCcw, Sliders, Zap, Waves, Scissors, Gauge, Clock, Mu
 import { TrackDef, TransitionConfig, TransitionPresetType } from '../types';
 import { evaluateKeyCompatibility, calculateTempoSync, evaluateEnvelope, generateHarmonizedSet, generateDefaultEnvelopes } from '../lib/djMixerLogic';
 import { PRESET_META } from './DjSetPlayer';
+import { globalPerformanceEngine } from '../lib/performanceEngine';
 import BeatgridRepairModal from './BeatgridRepairModal';
 
 interface WaveformTimelineProps {
@@ -69,6 +70,12 @@ export default function WaveformTimeline({
 }: WaveformTimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(1.0); // 0.4x to 2.5x
+  const [perfConfig, setPerfConfig] = useState(() => globalPerformanceEngine.getConfig());
+
+  useEffect(() => {
+    const unsubscribe = globalPerformanceEngine.subscribe(setPerfConfig);
+    return unsubscribe;
+  }, []);
 
   // Manual slip / timing offsets for each track (in seconds)
   const [trackOffsets, setTrackOffsets] = useState<Record<string, number>>({});
@@ -480,7 +487,8 @@ export default function WaveformTimeline({
               const isDraggingThis = draggingTrackId === track.id;
 
               // Waveform Peak Slices
-              const sliceCount = Math.min(320, Math.max(60, Math.floor(widthPx / 3.5)));
+              const maxSlices = perfConfig.waveformSliceGranularity;
+              const sliceCount = Math.min(maxSlices, Math.max(40, Math.floor(widthPx / (320 / maxSlices))));
               const bpm = track.bpm || 130;
               const beatIntervalSec = 60 / bpm;
               const beatgridOffsetSec = (track.beatgridOffsetMs || 0) / 1000;

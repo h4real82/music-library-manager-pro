@@ -430,8 +430,7 @@ export function generateDefaultEnvelopes(preset: TransitionPresetType, durationB
       };
     }
 
-    case 'equal-power':
-    default: {
+    case 'equal-power': {
       // 5. Volume-Fading mit Kurven (Equal-Power Gain Crossfade)
       return {
         lowA: [
@@ -475,6 +474,189 @@ export function generateDefaultEnvelopes(preset: TransitionPresetType, durationB
           { id: 'vb-3', beat: b, value: 1.0 },
         ],
       };
+    }
+
+    case 'reverb-rise': {
+      // 6. Reverb Wash / FX Riser Build
+      return {
+        lowA: [
+          { id: 'la-1', beat: 0, value: 1.0 },
+          { id: 'la-2', beat: b * 0.6, value: 1.0 },
+          { id: 'la-3', beat: b * 0.75, value: 0.1 },
+          { id: 'la-4', beat: b, value: 0.0 },
+        ],
+        lowB: [
+          { id: 'lb-1', beat: 0, value: 0.0 },
+          { id: 'lb-2', beat: b * 0.75, value: 0.0 },
+          { id: 'lb-3', beat: b, value: 1.0 },
+        ],
+        midA: [
+          { id: 'ma-1', beat: 0, value: 1.0 },
+          { id: 'ma-2', beat: b * 0.5, value: 0.8 },
+          { id: 'ma-3', beat: b, value: 0.0 },
+        ],
+        midB: [
+          { id: 'mb-1', beat: 0, value: 0.0 },
+          { id: 'mb-2', beat: b * 0.25, value: 0.4 },
+          { id: 'mb-3', beat: b, value: 1.0 },
+        ],
+        highA: [
+          { id: 'ha-1', beat: 0, value: 1.0 },
+          { id: 'ha-2', beat: b * 0.75, value: 1.0 },
+          { id: 'ha-3', beat: b, value: 0.0 },
+        ],
+        highB: [
+          { id: 'hb-1', beat: 0, value: 0.0 },
+          { id: 'hb-2', beat: b * 0.25, value: 0.5 },
+          { id: 'hb-3', beat: b, value: 1.0 },
+        ],
+        volumeA: [
+          { id: 'va-1', beat: 0, value: 1.0 },
+          { id: 'va-2', beat: b * 0.75, value: 0.9 },
+          { id: 'va-3', beat: b, value: 0.0 },
+        ],
+        volumeB: [
+          { id: 'vb-1', beat: 0, value: 0.0 },
+          { id: 'vb-2', beat: b * 0.25, value: 0.6 },
+          { id: 'vb-3', beat: b, value: 1.0 },
+        ],
+      };
+    }
+
+    case 'vocal-swap': {
+      // 7. Mid/Vocal Solo Swap
+      return {
+        lowA: [
+          { id: 'la-1', beat: 0, value: 1.0 },
+          { id: 'la-2', beat: b * 0.5, value: 0.8 },
+          { id: 'la-3', beat: b, value: 0.0 },
+        ],
+        lowB: [
+          { id: 'lb-1', beat: 0, value: 0.0 },
+          { id: 'lb-2', beat: b * 0.5, value: 0.2 },
+          { id: 'lb-3', beat: b, value: 1.0 },
+        ],
+        midA: [
+          { id: 'ma-1', beat: 0, value: 1.0 },
+          { id: 'ma-2', beat: b * 0.25, value: 1.0 },
+          { id: 'ma-3', beat: b * 0.26, value: 0.0 },
+          { id: 'ma-4', beat: b, value: 0.0 },
+        ],
+        midB: [
+          { id: 'mb-1', beat: 0, value: 0.0 },
+          { id: 'mb-2', beat: b * 0.25, value: 0.0 },
+          { id: 'mb-3', beat: b * 0.26, value: 1.0 },
+          { id: 'mb-4', beat: b, value: 1.0 },
+        ],
+        highA: [
+          { id: 'ha-1', beat: 0, value: 1.0 },
+          { id: 'ha-2', beat: b * 0.75, value: 0.5 },
+          { id: 'ha-3', beat: b, value: 0.0 },
+        ],
+        highB: [
+          { id: 'hb-1', beat: 0, value: 0.0 },
+          { id: 'hb-2', beat: b * 0.25, value: 0.5 },
+          { id: 'hb-3', beat: b, value: 1.0 },
+        ],
+        volumeA: [
+          { id: 'va-1', beat: 0, value: 1.0 },
+          { id: 'va-2', beat: b, value: 0.0 },
+        ],
+        volumeB: [
+          { id: 'vb-1', beat: 0, value: 0.0 },
+          { id: 'vb-2', beat: b, value: 1.0 },
+        ],
+      };
+    }
+
+    case 'progressive-filter': {
+      // 8. Progressive Double Filter Sweep
+      return {
+        lowA: [
+          { id: 'la-1', beat: 0, value: 1.0 },
+          { id: 'la-2', beat: b * 0.6, value: 0.6 },
+          { id: 'la-3', beat: b, value: 0.0 },
+        ],
+        lowB: [
+          { id: 'lb-1', beat: 0, value: 0.0 },
+          { id: 'lb-2', beat: b * 0.4, value: 0.4 },
+          { id: 'lb-3', beat: b, value: 1.0 },
+        ],
+        midA: [
+          { id: 'ma-1', beat: 0, value: 1.0 },
+          { id: 'ma-2', beat: b * 0.5, value: 0.7 },
+          { id: 'ma-3', beat: b, value: 0.0 },
+        ],
+        midB: [
+          { id: 'mb-1', beat: 0, value: 0.0 },
+          { id: 'mb-2', beat: b * 0.5, value: 0.5 },
+          { id: 'mb-3', beat: b, value: 1.0 },
+        ],
+        highA: [
+          { id: 'ha-1', beat: 0, value: 1.0 },
+          { id: 'ha-2', beat: b * 0.5, value: 0.7 },
+          { id: 'ha-3', beat: b, value: 0.0 },
+        ],
+        highB: [
+          { id: 'hb-1', beat: 0, value: 0.0 },
+          { id: 'hb-2', beat: b * 0.5, value: 0.5 },
+          { id: 'hb-3', beat: b, value: 1.0 },
+        ],
+        volumeA: [
+          { id: 'va-1', beat: 0, value: 1.0 },
+          { id: 'va-2', beat: b * 0.8, value: 0.6 },
+          { id: 'va-3', beat: b, value: 0.0 },
+        ],
+        volumeB: [
+          { id: 'vb-1', beat: 0, value: 0.0 },
+          { id: 'vb-2', beat: b * 0.2, value: 0.4 },
+          { id: 'vb-3', beat: b, value: 1.0 },
+        ],
+      };
+    }
+
+    case 'ambient-fade': {
+      // 9. Ambient Slow Crossfade
+      return {
+        lowA: [
+          { id: 'la-1', beat: 0, value: 1.0 },
+          { id: 'la-2', beat: b * 0.5, value: 0.7 },
+          { id: 'la-3', beat: b, value: 0.0 },
+        ],
+        lowB: [
+          { id: 'lb-1', beat: 0, value: 0.0 },
+          { id: 'lb-2', beat: b * 0.5, value: 0.3 },
+          { id: 'lb-3', beat: b, value: 1.0 },
+        ],
+        midA: [
+          { id: 'ma-1', beat: 0, value: 1.0 },
+          { id: 'ma-2', beat: b, value: 0.0 },
+        ],
+        midB: [
+          { id: 'mb-1', beat: 0, value: 0.0 },
+          { id: 'mb-2', beat: b, value: 1.0 },
+        ],
+        highA: [
+          { id: 'ha-1', beat: 0, value: 1.0 },
+          { id: 'ha-2', beat: b, value: 0.0 },
+        ],
+        highB: [
+          { id: 'hb-1', beat: 0, value: 0.0 },
+          { id: 'hb-2', beat: b, value: 1.0 },
+        ],
+        volumeA: [
+          { id: 'va-1', beat: 0, value: 1.0 },
+          { id: 'va-2', beat: b, value: 0.0 },
+        ],
+        volumeB: [
+          { id: 'vb-1', beat: 0, value: 0.0 },
+          { id: 'vb-2', beat: b, value: 1.0 },
+        ],
+      };
+    }
+
+    default: {
+      return generateDefaultEnvelopes('bass-swap', durationBeats);
     }
   }
 }

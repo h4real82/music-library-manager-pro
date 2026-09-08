@@ -71,6 +71,30 @@ export const PRESET_META: Record<TransitionPresetType, { name: string; icon: any
     color: '#22C55E', // green
     desc: 'Sinus/Cosinus-Kurve für konstanten Schalldruck ohne Mitten-Dip',
   },
+  'reverb-rise': {
+    name: 'Reverb Wash Riser',
+    icon: Sparkles,
+    color: '#EC4899', // pink
+    desc: 'Reverb-Fahne & Highpass-Anstieg vor dem schlagartigen Drop-Wechsel',
+  },
+  'vocal-swap': {
+    name: 'Mid / Vocal Swap',
+    icon: Activity,
+    color: '#3B82F6', // blue
+    desc: 'Exakter Mitten/Vocal-Austausch bei beibehaltener Low-End Struktur',
+  },
+  'progressive-filter': {
+    name: 'Progressive Double Filter',
+    icon: Waves,
+    color: '#10B981', // emerald
+    desc: 'Doppelter Low- & Highpass-Filter Sweep für Progressive & Techno Sets',
+  },
+  'ambient-fade': {
+    name: 'Ambient Slow Crossfade',
+    icon: Sliders,
+    color: '#8B5CF6', // purple
+    desc: 'Sehr langer, sanfter 64-Beat Erlebniscrossfade für Ambient & Chillout',
+  },
 };
 
 export default function DjSetPlayer({

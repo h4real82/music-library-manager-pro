@@ -13,6 +13,8 @@ import DjFilters from './components/DjFilters';
 import SetPlaylistDrawer from './components/SetPlaylistDrawer';
 import DjSetPlayer from './components/DjSetPlayer';
 import SetExportModal from './components/SetExportModal';
+import PerformanceModeSelector from './components/PerformanceModeSelector';
+import { Cpu } from 'lucide-react';
 import { globalDjSetEngine, SetTimeUpdateEvent } from './lib/djSetAudioEngine';
 import { analyzeTrackSegments, TrackSegment } from './lib/audioAnalysis';
 import { getCamelotColor, getEnergyColor, parseCamelotOrder, normalizeToCamelot } from './lib/djMixerLogic';
@@ -80,6 +82,7 @@ export default function App() {
   const [isLibraryManagerOpen, setIsLibraryManagerOpen] = useState(false);
   const [managerInitialTab, setManagerInitialTab] = useState<'tracks' | 'import' | 'groups' | 'organize'>('tracks');
   const [isSetPlaylistOpen, setIsSetPlaylistOpen] = useState(false);
+  const [isPerfModalOpen, setIsPerfModalOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'list' | 'mapper' | 'scatter' | 'graph'>('grid');
   
   // DJ Set Transitions State
@@ -1056,6 +1059,16 @@ export default function App() {
             )}
           </div>
           
+          <button
+            id="btn-perf-settings"
+            onClick={() => setIsPerfModalOpen(true)}
+            className="px-3 py-1.5 rounded-xl bg-[#0D0E12] border border-[#242936] text-purple-400 hover:text-purple-300 hover:border-purple-500/50 text-xs font-bold font-mono transition-all flex items-center gap-1.5 shadow-sm"
+            title="System-Performance & Hardware-Profil anpassen"
+          >
+            <Cpu className="w-3.5 h-3.5 text-purple-400" />
+            <span>Perf-Modus</span>
+          </button>
+
           <div className="flex bg-[#0D0E12] p-1 border border-[#242936] rounded-xl gap-1">
             <button 
               id="btn-view-cover"
@@ -1693,6 +1706,11 @@ export default function App() {
       )}
 
       {/* MuLiMa Pro DJ SET EXPORT MODAL */}
+      <PerformanceModeSelector 
+        isOpen={isPerfModalOpen}
+        onClose={() => setIsPerfModalOpen(false)}
+      />
+
       <SetExportModal
         isOpen={isSetExportModalOpen}
         onClose={() => setIsSetExportModalOpen(false)}
