@@ -1,4 +1,4 @@
-import { TrackDef, DeepAnalysisData, WaveformData } from '../types';
+import { TrackDef, DeepAnalysisData, WaveformData, TrackSegment } from '../types';
 
 /**
  * 32-bit FNV-1a Hash for deterministic track fingerprinting
@@ -22,6 +22,44 @@ function mulberry32(a: number) {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+/**
+ * Binary search to find the active track segment for a given sliceTime.
+ * Returns the segment where sliceTime >= s.startSec && sliceTime < s.endSec.
+ * Falls back to linear search if segments are unsorted.
+ */
+export function findActiveSegment(segments: TrackSegment[], sliceTime: number): TrackSegment | undefined {
+  let low = 0;
+  let high = segments.length - 1;
+
+  while (low <= high) {
+    const mid = (low + high) >>> 1;
+    const seg = segments[mid];
+
+    if (sliceTime < seg.startSec) {
+      high = mid - 1;
+    } else if (sliceTime >= seg.endSec) {
+      low = mid + 1;
+    } else {
+      return seg;
+    }
+  }
+
+  // Fallback for unsorted segments: check if segments were out of order
+  let isSorted = true;
+  for (let i = 1; i < segments.length; i++) {
+    if (segments[i - 1].startSec > segments[i].startSec) {
+      isSorted = false;
+      break;
+    }
+  }
+
+  if (!isSorted) {
+    return segments.find(s => sliceTime >= s.startSec && sliceTime < s.endSec);
+  }
+
+  return undefined;
 }
 
 export interface WaveformSliceMetrics {
@@ -160,7 +198,7 @@ export function getTrackWaveformSlice(
   let isBreakdown = false;
 
   if (track.segments && track.segments.length > 0) {
-    const activeSeg = track.segments.find(s => sliceTime >= s.startSec && sliceTime < s.endSec);
+    const activeSeg = findActiveSegment(track.segments, sliceTime);
     if (activeSeg) {
       const segName = (activeSeg.name || '').toLowerCase();
       if (segName.includes('drop') || segName.includes('peak') || segName.includes('chorus')) {
