@@ -4,6 +4,7 @@ import { TrackDef, TransitionConfig, TransitionEnvelopes, EnvelopePoint, Transit
 import { evaluateKeyCompatibility, calculateTempoSync, generateDefaultEnvelopes, evaluateEnvelope } from '../lib/djMixerLogic';
 import { PRESET_META } from './DjSetPlayer';
 import { globalDjSetEngine } from '../lib/djSetAudioEngine';
+import { getTrackWaveformSlice } from '../lib/waveformGenerator';
 
 interface TransitionOverlapStudioProps {
   transition: TransitionConfig;
@@ -544,38 +545,56 @@ export default function TransitionOverlapStudio({
                 </linearGradient>
               </defs>
 
-              {/* Background Waveform Representation for Lane A */}
-              <g opacity="0.35">
+              {/* Background Waveform Representation for Lane A (Real Audio Slices & Transients) */}
+              <g opacity="0.45">
                 {Array.from({ length: 120 }).map((_, idx) => {
                   const x = (idx / 120) * canvasWidth;
-                  const h = Math.abs(Math.sin(idx * 0.35)) * 45 + 10;
+                  const transDurationSec = beats * (60 / bpmA);
+                  const baseTimeA = transition.sourceTimeSec !== undefined
+                    ? transition.sourceTimeSec
+                    : Math.max(0, (sourceTrack?.duration || 180) - transDurationSec);
+                  const sliceTimeA = baseTimeA + (idx / 120) * transDurationSec;
+                  const sliceA = sourceTrack ? getTrackWaveformSlice(sourceTrack, sliceTimeA) : null;
+                  const h = sliceA
+                    ? Math.max(6, sliceA.bodyAmp * 50 + sliceA.needleAmp * 26)
+                    : Math.abs(Math.sin(idx * 0.35)) * 45 + 10;
+                  const fill = sliceA && sliceA.kickAmp > 0.45 ? '#F43F5E' : '#06B6D4';
+
                   return (
                     <rect
                       key={`wa-${idx}`}
                       x={x}
                       y={laneHeight / 2 - h / 2}
-                      width={canvasWidth / 120 - 1}
+                      width={Math.max(1, canvasWidth / 120 - 1)}
                       height={h}
-                      fill="#06B6D4"
+                      fill={fill}
                       rx="1"
                     />
                   );
                 })}
               </g>
 
-              {/* Background Waveform Representation for Lane B */}
-              <g opacity="0.35">
+              {/* Background Waveform Representation for Lane B (Real Audio Slices & Transients) */}
+              <g opacity="0.45">
                 {Array.from({ length: 120 }).map((_, idx) => {
                   const x = (idx / 120) * canvasWidth;
-                  const h = Math.abs(Math.cos(idx * 0.4)) * 45 + 10;
+                  const transDurationSec = beats * (60 / bpmA);
+                  const baseTimeB = transition.targetTimeSec !== undefined ? transition.targetTimeSec : 0;
+                  const sliceTimeB = baseTimeB + (idx / 120) * transDurationSec;
+                  const sliceB = targetTrack ? getTrackWaveformSlice(targetTrack, sliceTimeB) : null;
+                  const h = sliceB
+                    ? Math.max(6, sliceB.bodyAmp * 50 + sliceB.needleAmp * 26)
+                    : Math.abs(Math.cos(idx * 0.4)) * 45 + 10;
+                  const fill = sliceB && sliceB.kickAmp > 0.45 ? '#F59E0B' : '#10B981';
+
                   return (
                     <rect
                       key={`wb-${idx}`}
                       x={x}
                       y={laneHeight + laneHeight / 2 - h / 2}
-                      width={canvasWidth / 120 - 1}
+                      width={Math.max(1, canvasWidth / 120 - 1)}
                       height={h}
-                      fill="#10B981"
+                      fill={fill}
                       rx="1"
                     />
                   );

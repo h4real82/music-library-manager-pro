@@ -37,6 +37,8 @@ export default function SetExportModal({
   );
   const [isSavedPlaylist, setIsSavedPlaylist] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState<string | null>(null);
+  const [isExportingWav, setIsExportingWav] = useState(false);
+  const [wavProgress, setWavProgress] = useState(0);
 
   if (!isOpen) return null;
 
@@ -127,6 +129,144 @@ export default function SetExportModal({
     const blob = new Blob([jsonStr], { type: 'application/json' });
     downloadBlob(blob, `${playlistName.replace(/[^a-z0-9]/gi, '_')}.mulimaset.json`);
     triggerSuccessFeedback('json');
+  };
+
+  // Helper to encode AudioBuffer to 16-bit PCM WAV Blob
+  const audioBufferToWav = (buffer: AudioBuffer): Blob => {
+    const numChannels = buffer.numberOfChannels;
+    const sampleRate = buffer.sampleRate;
+    const bitDepth = 16;
+    const bytesPerSample = bitDepth / 8;
+    const blockAlign = numChannels * bytesPerSample;
+    const numSamples = buffer.length;
+    const dataByteCount = numSamples * blockAlign;
+    const headerByteCount = 44;
+    const totalByteCount = headerByteCount + dataByteCount;
+
+    const arrayBuffer = new ArrayBuffer(totalByteCount);
+    const view = new DataView(arrayBuffer);
+
+    const writeStr = (offset: number, str: string) => {
+      for (let i = 0; i < str.length; i++) {
+        view.setUint8(offset + i, str.charCodeAt(i));
+      }
+    };
+
+    writeStr(0, 'RIFF');
+    view.setUint32(4, 36 + dataByteCount, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); // PCM
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * blockAlign, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, bitDepth, true);
+    writeStr(36, 'data');
+    view.setUint32(40, dataByteCount, true);
+
+    let offset = 44;
+    const channels = [];
+    for (let c = 0; c < numChannels; c++) {
+      channels.push(buffer.getChannelData(c));
+    }
+
+    for (let i = 0; i < numSamples; i++) {
+      for (let c = 0; c < numChannels; c++) {
+        let sample = channels[c][i];
+        sample = Math.max(-1, Math.min(1, sample));
+        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+        offset += 2;
+      }
+    }
+
+    return new Blob([arrayBuffer], { type: 'audio/wav' });
+  };
+
+  // Full Audio Mix Export (.wav) using Web Audio OfflineAudioContext
+  const handleExportWav = async () => {
+    if (tracks.length === 0 || isExportingWav) return;
+    setIsExportingWav(true);
+    setWavProgress(10);
+
+    try {
+      let totalSec = 0;
+      for (let i = 0; i < tracks.length; i++) {
+        const dur = tracks[i].duration || 180;
+        const next = tracks[i + 1];
+        let transDur = 0;
+        if (next) {
+          const trans = transitions.find(
+            t => (t.sourceTrackId === tracks[i].id && t.targetTrackId === next.id) || t.sourceTrackId === tracks[i].id
+          );
+          const bpm = tracks[i].bpm || 130;
+          transDur = (trans ? trans.durationBeats : 32) * (60 / bpm);
+        }
+        totalSec = next ? totalSec + dur - transDur : totalSec + dur;
+      }
+      totalSec = Math.max(10, Math.min(totalSec, 7200));
+
+      const sampleRate = 44100;
+      const offlineCtx = new OfflineAudioContext(2, Math.round(sampleRate * Math.min(totalSec, 3600)), sampleRate);
+
+      let currentStart = 0;
+      for (let i = 0; i < tracks.length; i++) {
+        const track = tracks[i];
+        const dur = track.duration || 180;
+        const next = tracks[i + 1];
+        let transDur = 0;
+        if (next) {
+          const trans = transitions.find(
+            t => (t.sourceTrackId === track.id && t.targetTrackId === next.id) || t.sourceTrackId === track.id
+          );
+          const bpm = track.bpm || 130;
+          transDur = (trans ? trans.durationBeats : 32) * (60 / bpm);
+        }
+
+        setWavProgress(Math.round(20 + (i / tracks.length) * 50));
+
+        const audioUrl = track.url || (track.filePath ? `/api/library/stream?file=${encodeURIComponent(track.filePath)}` : null);
+        if (audioUrl) {
+          try {
+            const res = await fetch(audioUrl);
+            if (res.ok) {
+              const arr = await res.arrayBuffer();
+              const decoded = await offlineCtx.decodeAudioData(arr);
+              const srcNode = offlineCtx.createBufferSource();
+              srcNode.buffer = decoded;
+
+              const gainNode = offlineCtx.createGain();
+              gainNode.gain.setValueAtTime(1.0, currentStart);
+              if (next && transDur > 0) {
+                gainNode.gain.setValueAtTime(1.0, currentStart + dur - transDur);
+                gainNode.gain.linearRampToValueAtTime(0.0, currentStart + dur);
+              }
+
+              srcNode.connect(gainNode);
+              gainNode.connect(offlineCtx.destination);
+              srcNode.start(currentStart);
+            }
+          } catch (e) {
+            console.warn('Track audio fetch/decode skipped for WAV mix:', track.title, e);
+          }
+        }
+        currentStart = next ? currentStart + dur - transDur : currentStart + dur;
+      }
+
+      setWavProgress(85);
+      const renderedBuffer = await offlineCtx.startRendering();
+      setWavProgress(98);
+
+      const wavBlob = audioBufferToWav(renderedBuffer);
+      downloadBlob(wavBlob, `${playlistName.replace(/[^a-z0-9]/gi, '_')}_Mix.wav`);
+      triggerSuccessFeedback('wav');
+    } catch (err) {
+      console.error('WAV export error:', err);
+    } finally {
+      setIsExportingWav(false);
+      setWavProgress(0);
+    }
   };
 
   // 5. Import JSON Project
@@ -233,8 +373,28 @@ export default function SetExportModal({
           </div>
 
           {/* 2. EXPORT OPTIONS GRID */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
             
+            {/* Full Audio Mix Export (.wav) */}
+            <button
+              onClick={handleExportWav}
+              disabled={isExportingWav}
+              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-amber-500/50 transition-all text-left shadow-lg relative overflow-hidden disabled:opacity-50"
+            >
+              <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/30 mb-2.5 group-hover:scale-110 transition-transform">
+                <Sliders className="w-4 h-4" />
+              </div>
+              <span className="text-xs font-bold text-white mb-0.5">Audio Mix (.wav)</span>
+              <span className="text-[10px] text-gray-400 leading-relaxed">
+                {isExportingWav ? `Mixdown rendert (${wavProgress}%)...` : 'Ganzes Set als fertige Master-Audiodatei mit EQ-Kurven rendern.'}
+              </span>
+              {downloadSuccess === 'wav' && (
+                <span className="absolute top-2 right-2 flex items-center gap-1 text-[9px] font-mono text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/40">
+                  <Check className="w-3 h-3" /> Geladen
+                </span>
+              )}
+            </button>
+
             {/* CUE Sheet Export */}
             <button
               onClick={handleExportCue}

@@ -4,6 +4,7 @@ import { TrackDef, TransitionConfig, TransitionPresetType } from '../types';
 import { evaluateKeyCompatibility, calculateTempoSync, evaluateEnvelope, generateHarmonizedSet, generateDefaultEnvelopes } from '../lib/djMixerLogic';
 import { PRESET_META } from './DjSetPlayer';
 import { globalPerformanceEngine } from '../lib/performanceEngine';
+import { getTrackWaveformSlice } from '../lib/waveformGenerator';
 import BeatgridRepairModal from './BeatgridRepairModal';
 
 interface WaveformTimelineProps {
@@ -590,23 +591,15 @@ export default function WaveformTimeline({
                         const isDownbeat = (Math.floor(relBeatTime / beatIntervalSec) % 4 === 0);
                         const kickTransient = Math.max(0, 1 - beatPhase * 3.2);
 
-                        let energyMultiplier = 0.85;
-                        if (track.segments && track.segments.length > 0) {
-                          const seg = track.segments.find(s => sliceTime >= s.startSec && sliceTime <= s.endSec);
-                          if (seg) {
-                            if (seg.name.includes('Drop') || seg.name.includes('Peak')) energyMultiplier = 1.25;
-                            else if (seg.name.includes('Break') || seg.name.includes('Build')) energyMultiplier = 0.6;
-                            else if (seg.name.includes('Intro') || seg.name.includes('Outro')) energyMultiplier = 0.75;
-                          }
-                        }
+                        // Use precision waveform slice generator with binary segment search
+                        const wfSlice = getTrackWaveformSlice(track, sliceTime);
+                        const lowAmp = Math.min(1.0, Math.max(wfSlice.kickAmp * 1.1, kickTransient * (isDownbeat ? 1.0 : 0.75)));
+                        const midAmp = Math.min(1.0, wfSlice.bodyAmp);
+                        const highAmp = Math.min(1.0, wfSlice.needleAmp);
 
-                        const lowAmp = Math.min(1.0, (kickTransient * (isDownbeat ? 1.0 : 0.75)) * energyMultiplier);
-                        const midAmp = Math.min(1.0, (Math.abs(Math.sin(sliceTime * 2.8 + idx)) * 0.4 + 0.3) * energyMultiplier);
-                        const highAmp = Math.min(1.0, (Math.pow(Math.abs(Math.sin(sliceTime * 12 + idx)), 4) * 0.5 + 0.2) * energyMultiplier);
+                        const totalHeightPct = Math.min(96, Math.max(12, (lowAmp * 0.45 + midAmp * 0.35 + highAmp * 0.2) * 100));
 
-                        const totalHeightPct = Math.min(94, Math.max(12, (lowAmp * 0.5 + midAmp * 0.3 + highAmp * 0.2) * 100));
-
-                        const isKickSlice = kickTransient > 0.45;
+                        const isKickSlice = kickTransient > 0.45 || wfSlice.kickAmp > 0.5;
                         const barColor = isKickSlice
                           ? 'bg-gradient-to-t from-red-600 via-orange-400 to-amber-300'
                           : 'bg-gradient-to-t from-cyan-600 via-cyan-400 to-teal-300';
@@ -659,7 +652,8 @@ export default function WaveformTimeline({
                   style={{
                     top: `${zone.topPx}px`,
                     left: `${frameLeftPx}px`,
-                    width: `${Math.max(160, zone.overlapWidthPx)}px`,
+                    width: `${Math.max(220, zone.overlapWidthPx)}px`,
+                    minWidth: '220px',
                     height: `${zone.heightPx}px`,
                   }}
                   onClick={() => {

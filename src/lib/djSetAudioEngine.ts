@@ -68,6 +68,7 @@ export class DjSetAudioEngine {
   // Multi-Track Continuous Set State
   private setTracks: TrackDef[] = [];
   private setTransitions: TransitionConfig[] = [];
+  private transitionMap: Map<string, TransitionConfig> = new Map();
   private setPlayheadSec: number = 0;
   private setRafId: number | null = null;
   private lastRafTimestamp: number = 0;
@@ -327,15 +328,27 @@ export class DjSetAudioEngine {
     // Both audio elements track the elapsed transition time
     if (this.audioA && this.audioA.src) {
       const targetTimeA = Math.max(0, sourceMixOutSec + elapsedSec + offsetA);
-      if (Math.abs(this.audioA.currentTime - targetTimeA) > 0.3) {
+      if (Math.abs(this.audioA.currentTime - targetTimeA) > 0.75) {
         this.audioA.currentTime = targetTimeA;
       }
     }
 
     if (this.audioB && this.audioB.src) {
       const targetTimeB = Math.max(0, targetMixInSec + (elapsedSec * (bpmA / bpmB)) + offsetB);
-      if (Math.abs(this.audioB.currentTime - targetTimeB) > 0.3) {
+      if (Math.abs(this.audioB.currentTime - targetTimeB) > 0.75) {
         this.audioB.currentTime = targetTimeB;
+      }
+    }
+  }
+
+  private rebuildTransitionMap() {
+    this.transitionMap.clear();
+    for (const t of this.setTransitions) {
+      if (t.sourceTrackId) {
+        this.transitionMap.set(t.sourceTrackId, t);
+        if (t.targetTrackId) {
+          this.transitionMap.set(`${t.sourceTrackId}___${t.targetTrackId}`, t);
+        }
       }
     }
   }
@@ -345,6 +358,7 @@ export class DjSetAudioEngine {
   public initSet(tracks: TrackDef[], transitions: TransitionConfig[], startSetTimeSec: number = 0) {
     this.setTracks = tracks;
     this.setTransitions = transitions;
+    this.rebuildTransitionMap();
     this.setPlayheadSec = startSetTimeSec;
     this.isSetMode = true;
     this.applySetStateAtTime(startSetTimeSec);
@@ -428,10 +442,7 @@ export class DjSetAudioEngine {
       let transDurationSec = 0;
 
       if (nextTrack) {
-        trans = this.setTransitions.find(t => 
-          (t.sourceTrackId === track.id && t.targetTrackId === nextTrack.id) ||
-          (t.sourceTrackId === track.id)
-        );
+        trans = this.transitionMap.get(`${track.id}___${nextTrack.id}`) || this.transitionMap.get(track.id);
         const bpm = track.bpm || 130;
         const beats = trans ? trans.durationBeats : 32;
         transDurationSec = beats * (60 / bpm);
@@ -530,7 +541,7 @@ export class DjSetAudioEngine {
         this.loadDeckA(currentLayout.track, Math.max(0, timeSec - currentLayout.startSec));
       } else if (this.audioA) {
         const targetTrackTime = Math.max(0, timeSec - currentLayout.startSec);
-        if (Math.abs(this.audioA.currentTime - targetTrackTime) > 0.4) {
+        if (Math.abs(this.audioA.currentTime - targetTrackTime) > 0.75) {
           this.audioA.currentTime = targetTrackTime;
         }
       }
@@ -575,7 +586,7 @@ export class DjSetAudioEngine {
         const next = this.setTracks[i + 1];
         let transDur = 0;
         if (next) {
-          const trans = this.setTransitions.find(t => t.sourceTrackId === this.setTracks[i].id);
+          const trans = this.transitionMap.get(`${this.setTracks[i].id}___${next.id}`) || this.transitionMap.get(this.setTracks[i].id);
           const bpm = this.setTracks[i].bpm || 130;
           transDur = (trans ? trans.durationBeats : 32) * (60 / bpm);
         }

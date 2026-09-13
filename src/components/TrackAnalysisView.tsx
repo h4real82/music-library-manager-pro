@@ -193,7 +193,7 @@ export default function TrackAnalysisView({
   const [activeTab, setActiveTab] = useState<'studio' | 'beatgrid' | 'spectrum' | 'online'>('studio');
 
   // Zoom level for waveform (1x, 2x, 4x, 8x)
-  const [zoomLevel, setZoomLevel] = useState<number>(2);
+  const [zoomLevel, setZoomLevel] = useState<number>(1);
 
   // Deck Pitch, CUE & Loop State
   const [pitchSlider, setPitchSlider] = useState<number>(0);

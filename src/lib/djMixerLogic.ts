@@ -38,14 +38,37 @@ export const MUSICAL_KEY_TO_CAMELOT: Record<string, string> = {
   'E': '12B', 'EMAJ': '12B', 'EMAJOR': '12B', 'EDUR': '12B',
 };
 
+// Pre-populated caches for high-throughput Camelot normalization and parsing
+const CAMELOT_NORM_CACHE = new Map<string, string | null>();
+const CAMELOT_PARSE_CACHE = new Map<string, { num: number; letter: string } | null>();
+
+for (let i = 1; i <= 12; i++) {
+  const kA = `${i}A`;
+  const kB = `${i}B`;
+  CAMELOT_NORM_CACHE.set(kA, kA);
+  CAMELOT_NORM_CACHE.set(kB, kB);
+  CAMELOT_NORM_CACHE.set(`${i}a`, kA);
+  CAMELOT_NORM_CACHE.set(`${i}b`, kB);
+  CAMELOT_NORM_CACHE.set(i < 10 ? `0${i}A` : `${i}A`, kA);
+  CAMELOT_NORM_CACHE.set(i < 10 ? `0${i}B` : `${i}B`, kB);
+  CAMELOT_PARSE_CACHE.set(kA, { num: i, letter: 'A' });
+  CAMELOT_PARSE_CACHE.set(kB, { num: i, letter: 'B' });
+}
+
 /**
  * Normalizes any key representation (Camelot e.g. '8A', Rekordbox/OpenKey e.g. '10m'/'7d',
  * or Musical Notes e.g. 'Am', 'C#m', 'F#') into standard Camelot format (e.g. '8A', '8B', '12A', '1B').
  */
 export function normalizeToCamelot(key?: string | null): string | null {
   if (!key) return null;
+  const cached = CAMELOT_NORM_CACHE.get(key);
+  if (cached !== undefined) return cached;
+
   const raw = key.trim();
-  if (!raw || raw === '-' || raw === '?' || raw.toLowerCase() === 'unknown') return null;
+  if (!raw || raw === '-' || raw === '?' || raw.toLowerCase() === 'unknown') {
+    CAMELOT_NORM_CACHE.set(key, null);
+    return null;
+  }
 
   // 1. Check for Camelot / Rekordbox / OpenKey pattern: 1-12 followed by A/B or M/D (case insensitive)
   // e.g. "8A", "8a", "08A", "10m", "7d", "12M", "1D", "8 A", "8-A", "8A / Am"
@@ -54,7 +77,9 @@ export function normalizeToCamelot(key?: string | null): string | null {
     const num = parseInt(numLetterMatch[1], 10);
     const char = numLetterMatch[2].toUpperCase();
     const letter = (char === 'M' || char === 'A') ? 'A' : 'B';
-    return `${num}${letter}`;
+    const res = `${num}${letter}`;
+    CAMELOT_NORM_CACHE.set(key, res);
+    return res;
   }
 
   // 2. Fast lookup for musical note strings
@@ -63,7 +88,9 @@ export function normalizeToCamelot(key?: string | null): string | null {
     .replace(/\s+/g, '');
 
   if (MUSICAL_KEY_TO_CAMELOT[clean]) {
-    return MUSICAL_KEY_TO_CAMELOT[clean];
+    const res = MUSICAL_KEY_TO_CAMELOT[clean];
+    CAMELOT_NORM_CACHE.set(key, res);
+    return res;
   }
 
   // 3. Regex parser for musical notes with accidentals (#/b) and modes (m/min/minor/moll/maj/major/dur)
@@ -75,11 +102,32 @@ export function normalizeToCamelot(key?: string | null): string | null {
     const isMinor = mode.startsWith('m') || mode === 'moll';
     const lookupKey = `${root}${accidental}${isMinor ? 'M' : ''}`;
     if (MUSICAL_KEY_TO_CAMELOT[lookupKey]) {
-      return MUSICAL_KEY_TO_CAMELOT[lookupKey];
+      const res = MUSICAL_KEY_TO_CAMELOT[lookupKey];
+      CAMELOT_NORM_CACHE.set(key, res);
+      return res;
     }
   }
 
+  CAMELOT_NORM_CACHE.set(key, null);
   return null;
+}
+
+/**
+ * Fast cached parser for Camelot key string (e.g. '8A' -> { num: 8, letter: 'A' })
+ */
+export function parseCamelot(k?: string | null): { num: number; letter: string } | null {
+  if (!k) return null;
+  const cached = CAMELOT_PARSE_CACHE.get(k);
+  if (cached !== undefined) return cached;
+
+  const match = k.match(/(\d+)([AB])/i);
+  if (!match) {
+    CAMELOT_PARSE_CACHE.set(k, null);
+    return null;
+  }
+  const parsed = { num: parseInt(match[1], 10), letter: match[2].toUpperCase() };
+  CAMELOT_PARSE_CACHE.set(k, parsed);
+  return parsed;
 }
 
 /**
@@ -92,12 +140,6 @@ export function evaluateKeyCompatibility(keyA?: string, keyB?: string): KeyCompa
 
   const normA = normalizeToCamelot(keyA);
   const normB = normalizeToCamelot(keyB);
-
-  const parseCamelot = (k: string) => {
-    const match = k.match(/(\d+)([AB])/);
-    if (!match) return null;
-    return { num: parseInt(match[1], 10), letter: match[2] };
-  };
 
   const cA = normA ? parseCamelot(normA) : null;
   const cB = normB ? parseCamelot(normB) : null;
