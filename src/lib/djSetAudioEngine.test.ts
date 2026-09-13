@@ -2,16 +2,25 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { DjSetAudioEngine, globalDjSetEngine } from './djSetAudioEngine';
 import { TrackDef, TransitionConfig, TransitionEnvelopes } from '../types';
 
-// Mock classes for Web Audio API & HTMLAudioElement
+// Simple mock fn creator for vitest / bun compatibility
+function createMockFn(impl?: Function) {
+  const fn = function (...args: any[]) {
+    fn.calls.push(args);
+    if (impl) return impl(...args);
+  };
+  fn.calls = [] as any[][];
+  return fn;
+}
+
 class MockAudioParam {
   public value: number = 0;
-  public setValueAtTime = vi.fn((val: number) => { this.value = val; });
-  public setTargetAtTime = vi.fn((val: number) => { this.value = val; });
+  public setValueAtTime = createMockFn((val: number) => { this.value = val; });
+  public setTargetAtTime = createMockFn((val: number) => { this.value = val; });
 }
 
 class MockGainNode {
   public gain = new MockAudioParam();
-  public connect = vi.fn();
+  public connect = createMockFn();
 }
 
 class MockBiquadFilterNode {
@@ -19,21 +28,21 @@ class MockBiquadFilterNode {
   public frequency = new MockAudioParam();
   public Q = new MockAudioParam();
   public gain = new MockAudioParam();
-  public connect = vi.fn();
+  public connect = createMockFn();
 }
 
 class MockMediaElementAudioSourceNode {
-  public connect = vi.fn();
+  public connect = createMockFn();
 }
 
 class MockAudioContext {
   public currentTime: number = 0;
   public state: string = 'suspended';
   public destination = {};
-  public createGain = vi.fn(() => new MockGainNode());
-  public createBiquadFilter = vi.fn(() => new MockBiquadFilterNode());
-  public createMediaElementSource = vi.fn(() => new MockMediaElementAudioSourceNode());
-  public resume = vi.fn(async () => { this.state = 'running'; });
+  public createGain = createMockFn(() => new MockGainNode());
+  public createBiquadFilter = createMockFn(() => new MockBiquadFilterNode());
+  public createMediaElementSource = createMockFn(() => new MockMediaElementAudioSourceNode());
+  public resume = createMockFn(async () => { this.state = 'running'; });
 }
 
 class MockHTMLAudioElement {
@@ -43,9 +52,9 @@ class MockHTMLAudioElement {
   public playbackRate: number = 1.0;
   public paused: boolean = true;
 
-  public load = vi.fn();
-  public play = vi.fn(async () => { this.paused = false; });
-  public pause = vi.fn(() => { this.paused = true; });
+  public load = createMockFn();
+  public play = createMockFn(async () => { this.paused = false; });
+  public pause = createMockFn(() => { this.paused = true; });
 }
 
 const sampleTrackA: TrackDef = {
@@ -93,14 +102,14 @@ describe('DjSetAudioEngine - State Transitions and Logic', () => {
   let engine: DjSetAudioEngine;
 
   beforeEach(() => {
-    vi.stubGlobal('AudioContext', MockAudioContext);
-    vi.stubGlobal('Audio', MockHTMLAudioElement);
-    vi.stubGlobal('window', {
+    (globalThis as any).AudioContext = MockAudioContext;
+    (globalThis as any).Audio = MockHTMLAudioElement;
+    (globalThis as any).window = {
       AudioContext: MockAudioContext,
       Audio: MockHTMLAudioElement,
-    });
-    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => 1);
-    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    };
+    (globalThis as any).requestAnimationFrame = (cb: FrameRequestCallback) => 1;
+    (globalThis as any).cancelAnimationFrame = createMockFn();
 
     engine = new DjSetAudioEngine();
   });
@@ -124,6 +133,17 @@ describe('DjSetAudioEngine - State Transitions and Logic', () => {
       expect(elements.audioB?.src).toBe('https://example.com/trackB.mp3');
       expect(elements.audioB?.currentTime).toBe(20);
     });
+
+    it('should not reload track if same audio src is already loaded', () => {
+      engine.loadDeckA(sampleTrackA, 10);
+      const elements = engine.getAudioElements();
+      const loadCallCount = (elements.audioA?.load as any).calls.length;
+
+      // Load same track again
+      engine.loadDeckA(sampleTrackA, 15);
+      expect((elements.audioA?.load as any).calls.length).toBe(loadCallCount);
+      expect(elements.audioA?.currentTime).toBe(15);
+    });
   });
 
   describe('Play / Pause State Transitions', () => {
@@ -134,6 +154,14 @@ describe('DjSetAudioEngine - State Transitions and Logic', () => {
       expect(engine.getIsPlaying()).toBe(true);
     });
 
+    it('should resume suspended AudioContext when play() is called', async () => {
+      engine.init();
+      const ctx = (engine as any).ctx;
+      expect(ctx.state).toBe('suspended');
+      await engine.play();
+      expect(ctx.state).toBe('running');
+    });
+
     it('should transition from playing to paused state', async () => {
       engine.loadDeckA(sampleTrackA);
       await engine.play();
@@ -141,6 +169,51 @@ describe('DjSetAudioEngine - State Transitions and Logic', () => {
 
       engine.pause();
       expect(engine.getIsPlaying()).toBe(false);
+    });
+
+    it('should handle repeat play() calls gracefully', async () => {
+      engine.loadDeckA(sampleTrackA);
+      await engine.play();
+      expect(engine.getIsPlaying()).toBe(true);
+
+      await engine.play();
+      expect(engine.getIsPlaying()).toBe(true);
+    });
+
+    it('should handle repeat pause() calls gracefully', async () => {
+      engine.loadDeckA(sampleTrackA);
+      await engine.play();
+      engine.pause();
+      expect(engine.getIsPlaying()).toBe(false);
+
+      engine.pause();
+      expect(engine.getIsPlaying()).toBe(false);
+    });
+
+    it('should catch rejected audio play() promises without throwing', async () => {
+      engine.loadDeckA(sampleTrackA);
+      const elements = engine.getAudioElements();
+      if (elements.audioA) {
+        elements.audioA.play = createMockFn(async () => {
+          throw new Error('Autoplay blocked');
+        });
+      }
+
+      await expect(engine.play()).resolves.toBeUndefined();
+      expect(engine.getIsPlaying()).toBe(true);
+    });
+
+    it('should start set loop when play() is called in set mode', async () => {
+      let rafCalled = false;
+      (globalThis as any).requestAnimationFrame = (cb: FrameRequestCallback) => {
+        rafCalled = true;
+        return 123;
+      };
+      engine.initSet([sampleTrackA, sampleTrackB], [sampleTransition], 0);
+      await engine.play();
+
+      expect(engine.getIsPlaying()).toBe(true);
+      expect(rafCalled).toBe(true);
     });
 
     it('should handle export singleton instance globalDjSetEngine', () => {
@@ -253,6 +326,9 @@ describe('DjSetAudioEngine - State Transitions and Logic', () => {
           volumeB: [{ id: '1', beat: 0, value: 0.0 }, { id: '2', beat: 32, value: 1.0 }],
         };
 
+        const stateSoloA = engine.computeTransitionState(0.01, 'bass-swap', customEnvelopes, 32);
+        expect(stateSoloA.phaseLabel).toContain('Track A Solo');
+
         const stateMid = engine.computeTransitionState(0.5, 'bass-swap', customEnvelopes, 32);
         expect(stateMid.deckA.eqLow).toBe(0.5);
         expect(stateMid.deckB.eqLow).toBe(0.5);
@@ -260,6 +336,9 @@ describe('DjSetAudioEngine - State Transitions and Logic', () => {
         const stateLate = engine.computeTransitionState(0.8, 'bass-swap', customEnvelopes, 32);
         expect(stateLate.isBassSwapped).toBe(true);
         expect(stateLate.phaseLabel).toContain('BASS SWAP');
+
+        const stateSoloB = engine.computeTransitionState(0.98, 'bass-swap', customEnvelopes, 32);
+        expect(stateSoloB.phaseLabel).toContain('Track B Solo');
       });
     });
   });
@@ -267,15 +346,16 @@ describe('DjSetAudioEngine - State Transitions and Logic', () => {
   describe('DSP Node Updates & Callbacks (applyTransitionState & setProgress)', () => {
     it('should apply transition state to audio context nodes and invoke onStateChange callback', () => {
       engine.init(); // Initialize audio nodes
-      const cb = vi.fn();
-      engine.setCallback(cb);
+      let calledState: any = null;
+      engine.setCallback((state) => {
+        calledState = state;
+      });
 
       engine.setProgress(0.5, 'bass-swap');
 
-      expect(cb).toHaveBeenCalledTimes(1);
-      const stateArg = cb.mock.calls[0][0];
-      expect(stateArg.progress).toBe(0.5);
-      expect(stateArg.isBassSwapped).toBe(true);
+      expect(calledState).not.toBeNull();
+      expect(calledState.progress).toBe(0.5);
+      expect(calledState.isBassSwapped).toBe(true);
     });
   });
 
@@ -292,40 +372,77 @@ describe('DjSetAudioEngine - State Transitions and Logic', () => {
     });
 
     it('should transition between solo zone and overlap transition zone', () => {
-      const cb = vi.fn();
-      engine.onSetTimeUpdate(cb);
+      let lastEvent: any = null;
+      engine.onSetTimeUpdate((event) => {
+        lastEvent = event;
+      });
 
       // 1. Time = 10s -> Solo zone (Track A solo)
       engine.initSet(tracks, transitions, 10);
       engine.seekSet(10);
-      expect(cb).toHaveBeenCalled();
-      let event = cb.mock.calls[cb.mock.calls.length - 1][0];
-      expect(event.activeTrackIndex).toBe(0);
-      expect(event.activeTrackId).toBe('track-a');
-      expect(event.activeTransitionId).toBeNull();
+      expect(lastEvent).not.toBeNull();
+      expect(lastEvent.activeTrackIndex).toBe(0);
+      expect(lastEvent.activeTrackId).toBe('track-a');
+      expect(lastEvent.activeTransitionId).toBeNull();
+      expect(lastEvent.crossfaderPosition).toBe(0);
 
       // 2. Time = 165s -> Transition Overlap Zone (between 160s and 174.77s)
       engine.seekSet(165);
-      event = cb.mock.calls[cb.mock.calls.length - 1][0];
-      expect(event.activeTrackIndex).toBe(0);
-      expect(event.activeTrackId).toBe('track-a');
-      expect(event.incomingTrackId).toBe('track-b');
-      expect(event.activeTransitionId).toBe('trans-1');
-      expect(event.transitionProgress).toBeGreaterThan(0);
+      expect(lastEvent.activeTrackIndex).toBe(0);
+      expect(lastEvent.activeTrackId).toBe('track-a');
+      expect(lastEvent.incomingTrackId).toBe('track-b');
+      expect(lastEvent.activeTransitionId).toBe('trans-1');
+      expect(lastEvent.transitionProgress).toBeGreaterThan(0);
+
+      // 3. Time = 180s -> Track A after transition end
+      engine.seekSet(180);
+      expect(lastEvent.activeTrackIndex).toBe(0);
+      expect(lastEvent.activeTrackId).toBe('track-a');
+      expect(lastEvent.activeTransitionId).toBeNull();
+      expect(lastEvent.crossfaderPosition).toBe(0);
+    });
+
+    it('should play Deck B when entering transition overlap while playing', async () => {
+      engine.initSet(tracks, transitions, 10);
+      await engine.play();
+
+      // Seek into transition overlap zone
+      engine.seekSet(165);
+      const elements = engine.getAudioElements();
+      expect(elements.audioB?.paused).toBe(false);
+    });
+
+    it('should pause Deck B and reset crossfader when exiting transition overlap zone into solo zone', async () => {
+      engine.initSet(tracks, transitions, 165);
+      await engine.play();
+
+      const elements = engine.getAudioElements();
+      expect(elements.audioB?.paused).toBe(false);
+
+      // Seek out of transition into Deck A solo zone
+      engine.seekSet(180);
+      expect(elements.audioB?.paused).toBe(true);
+    });
+
+    it('should handle empty set tracks gracefully in applySetStateAtTime and notifySetTime', () => {
+      engine.initSet([], [], 0);
+      engine.seekSet(10);
+      expect(engine.getSetPlayheadSec()).toBe(10);
     });
 
     it('should unsubscribe onSetTimeUpdate callback when returned function is executed', () => {
-      const cb = vi.fn();
-      const unsubscribe = engine.onSetTimeUpdate(cb);
+      let callCount = 0;
+      const unsubscribe = engine.onSetTimeUpdate(() => {
+        callCount++;
+      });
 
       engine.seekSet(10);
-      expect(cb).toHaveBeenCalled();
+      expect(callCount).toBe(1);
 
-      cb.mockClear();
       unsubscribe();
 
       engine.seekSet(20);
-      expect(cb).not.toHaveBeenCalled();
+      expect(callCount).toBe(1);
     });
 
     it('should handle playSet with initial set start time', async () => {
@@ -343,6 +460,15 @@ describe('DjSetAudioEngine - State Transitions and Logic', () => {
       engine.syncDecksTempo(128, 130);
       const elements = engine.getAudioElements();
       expect(elements.audioB?.playbackRate).toBeCloseTo(128 / 130);
+    });
+
+    it('should fallback playbackRate to 1.0 when invalid or zero BPM provided', () => {
+      engine.loadDeckA(sampleTrackA);
+      engine.loadDeckB(sampleTrackB);
+
+      engine.syncDecksTempo(0, 130);
+      const elements = engine.getAudioElements();
+      expect(elements.audioB?.playbackRate).toBe(1.0);
     });
 
     it('should seek Deck A and Deck B individually', () => {
