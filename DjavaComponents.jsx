@@ -1,8 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-// 1. ABSOLUTER AUDIO AUDIO-FIX (Global verankert, wird nie zerstört)
-const audioInstance = typeof window !== 'undefined' ? new Audio() : null;
-if (audioInstance) audioInstance.volume = 0.9;
+// 1. ABSOLUTER AUDIO AUDIO-FIX (Global verankert, lazy initialisiert)
+let globalAudioInstance = null;
+
+export function getAudioInstance() {
+  if (typeof window === 'undefined') return null;
+  if (!globalAudioInstance) {
+    globalAudioInstance = new Audio();
+    globalAudioInstance.volume = 0.9;
+  }
+  return globalAudioInstance;
+}
 
 export function MulimaDashboard({ tracks, setTracks }) {
   // 2. STATES FÜR GRUPPEN & FILTER
@@ -14,15 +22,37 @@ export function MulimaDashboard({ tracks, setTracks }) {
 
   // Audio-Steuerung
   const playTrack = (track) => {
+    const audioInstance = getAudioInstance();
     if (!audioInstance) return;
+
     if (currentTrack?.id === track.id) {
-      if (isPlaying) { audioInstance.pause(); setIsPlaying(false); }
-      else { audioInstance.play(); setIsPlaying(true); }
+      if (isPlaying) {
+        audioInstance.pause();
+        setIsPlaying(false);
+      } else {
+        const playPromise = audioInstance.play();
+        if (playPromise !== undefined) {
+          playPromise
+            .then(() => setIsPlaying(true))
+            .catch((e) => {
+              console.warn('Playback error:', e);
+              setIsPlaying(false);
+            });
+        }
+      }
     } else {
       audioInstance.pause();
       audioInstance.src = track.url;
       audioInstance.load();
-      audioInstance.play().then(() => setIsPlaying(true)).catch(e => console.log(e));
+      const playPromise = audioInstance.play();
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => setIsPlaying(true))
+          .catch((e) => {
+            console.warn('Playback error:', e);
+            setIsPlaying(false);
+          });
+      }
       setCurrentTrack(track);
     }
   };
