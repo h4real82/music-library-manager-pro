@@ -44,7 +44,8 @@ export default function PerformanceModeSelector({ isOpen, onClose }: Performance
           </div>
           <button 
             onClick={onClose}
-            className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-[#242936] transition-all"
+            aria-label="Close graphics performance settings"
+            className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-[#242936] transition-all focus-visible:ring-2 focus-visible:ring-cyan-500 focus-visible:outline-none"
           >
             <X className="w-5 h-5" />
           </button>

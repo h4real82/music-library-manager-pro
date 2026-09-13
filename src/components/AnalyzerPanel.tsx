@@ -460,7 +460,11 @@ ${cueXml}
           <button onClick={exportNml} className="flex items-center gap-2 bg-[#242936] hover:bg-[#A855F7] text-white px-4 py-2 rounded font-bold text-sm transition-colors shadow-sm border border-[#333a4d]">
             <Download className="w-4 h-4" /> Export DJ NML (.nml)
           </button>
-          <button onClick={onClose} className="p-2 text-gray-500 hover:text-white bg-[#0D0E12] border border-[#242936] hover:border-gray-500 rounded-full transition-colors">
+          <button
+            onClick={onClose}
+            aria-label="Close audio analyzer panel"
+            className="p-2 text-gray-500 hover:text-white bg-[#0D0E12] border border-[#242936] hover:border-gray-500 rounded-full transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500 focus-visible:outline-none"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>

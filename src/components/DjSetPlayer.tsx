@@ -495,7 +495,8 @@ export default function DjSetPlayer({
                   }
                 }
               }}
-              className="p-1 rounded text-gray-500 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+              aria-label="Previous transition with cue seek"
+              className="p-1 rounded text-gray-500 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-cyan-500 focus-visible:outline-none"
               title="Vorheriger Übergang (mit Cue Seek)"
             >
               <ChevronLeft className="w-4 h-4" />
@@ -523,7 +524,8 @@ export default function DjSetPlayer({
                   }
                 }
               }}
-              className="p-1 rounded text-gray-500 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+              aria-label="Next transition with cue seek"
+              className="p-1 rounded text-gray-500 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-cyan-500 focus-visible:outline-none"
               title="Nächster Übergang (mit Cue Seek)"
             >
               <ChevronRight className="w-4 h-4" />

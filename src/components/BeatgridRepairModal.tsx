@@ -163,7 +163,8 @@ export default function BeatgridRepairModal({
 
           <button
             onClick={onClose}
-            className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-[#242936] transition-colors"
+            aria-label="Close beatgrid repair modal"
+            className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-[#242936] transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500 focus-visible:outline-none"
           >
             <X className="w-5 h-5" />
           </button>
