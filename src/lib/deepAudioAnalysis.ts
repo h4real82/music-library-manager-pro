@@ -61,7 +61,7 @@ export function freqToNote(freqHz: number): { note: string; octave: number; cent
   const a4 = 440.0;
   const semitonesFromA4 = 12 * Math.log2(freqHz / a4);
   const roundedSemitone = Math.round(semitonesFromA4);
-  const cents = Math.round((semitonesFromA4 - roundedSemitone) * 100);
+  const cents = Math.round((semitonesFromA4 - roundedSemitone) * 100) || 0;
 
   // A4 is note index 9 in octave 4
   const noteIndex = ((roundedSemitone + 9) % 12 + 12) % 12;
