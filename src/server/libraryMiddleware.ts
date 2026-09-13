@@ -26,6 +26,13 @@ const DEFAULT_GROUPS: MulimaGroupData[] = [
   { id: 'grp_dark', name: 'Dark Techno', mood: 'Dunkel & Industriell', style: 'Hard / Industrial', color: '#22C55E', createdAt: Date.now() },
 ];
 
+export function isSafeSubpath(baseDir: string, targetPath: string): boolean {
+  const resolvedBase = path.resolve(baseDir);
+  const resolvedTarget = path.resolve(targetPath);
+  const rel = path.relative(resolvedBase, resolvedTarget);
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
 export function createLibraryMiddleware(rootDir: string): Connect.NextHandleFunction {
   const libraryDir = path.resolve(rootDir, 'LIBRARY');
   if (!fs.existsSync(libraryDir)) {
@@ -191,7 +198,7 @@ export function createLibraryMiddleware(rootDir: string): Connect.NextHandleFunc
       }
 
       const safePath = path.resolve(libraryDir, fileParam);
-      if (!safePath.startsWith(libraryDir) || !fs.existsSync(safePath)) {
+      if (!isSafeSubpath(libraryDir, safePath) || !fs.existsSync(safePath)) {
         res.statusCode = 404;
         res.end('File not found');
         return;
@@ -397,7 +404,7 @@ export function createLibraryMiddleware(rootDir: string): Connect.NextHandleFunc
       }
 
       const safePath = path.resolve(libraryDir, fileParam);
-      if (!safePath.startsWith(libraryDir)) {
+      if (!isSafeSubpath(libraryDir, safePath)) {
         res.statusCode = 403;
         res.end(JSON.stringify({ success: false, error: 'Access denied' }));
         return;
@@ -983,7 +990,7 @@ export function createLibraryMiddleware(rootDir: string): Connect.NextHandleFunc
 
           for (const rel of pathsToDelete) {
             const safe = path.resolve(libraryDir, rel);
-            if (safe.startsWith(libraryDir) && fs.existsSync(safe)) {
+            if (isSafeSubpath(libraryDir, safe) && fs.existsSync(safe)) {
               try {
                 fs.unlinkSync(safe);
                 removedCount++;
