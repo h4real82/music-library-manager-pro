@@ -348,7 +348,8 @@ export default function TransitionOverlapStudio({
 
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-xl text-gray-400 hover:text-white hover:bg-[#242936] flex items-center justify-center transition-colors"
+            aria-label="Close transition overlap studio"
+            className="w-8 h-8 rounded-xl text-gray-400 hover:text-white hover:bg-[#242936] flex items-center justify-center transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500 focus-visible:outline-none"
           >
             <X className="w-5 h-5" />
           </button>
