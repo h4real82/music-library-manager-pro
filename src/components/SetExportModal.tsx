@@ -236,13 +236,25 @@ export default function SetExportModal({
     try {
       const resolvedStartTimes = getResolvedTrackStartTimes();
 
-      // Find overall set duration
+      // For each track, compute the playback offset (targetTimeSec from incoming transition)
+      const trackPlayOffsets: number[] = tracks.map((track, i) => {
+        if (i === 0) return 0;
+        const prevTrack = tracks[i - 1];
+        const inTrans = transitions.find(
+          t => (t.sourceTrackId === prevTrack.id && t.targetTrackId === track.id) || t.sourceTrackId === prevTrack.id
+        );
+        return inTrans?.targetTimeSec ?? 0;
+      });
+
+      // Find overall set duration (accounting for targetTimeSec offsets)
       let maxEndSec = 0;
       for (let i = 0; i < tracks.length; i++) {
         const start = resolvedStartTimes[i];
         const dur = tracks[i].duration || 180;
-        if (start + dur > maxEndSec) {
-          maxEndSec = start + dur;
+        const offset = trackPlayOffsets[i];
+        const effectiveDur = dur - offset; // Track plays from offset to end
+        if (start + effectiveDur > maxEndSec) {
+          maxEndSec = start + effectiveDur;
         }
       }
       const totalMixSec = Math.max(10, Math.min(maxEndSec + 2, 14400));
@@ -259,6 +271,8 @@ export default function SetExportModal({
         const trackStartSec = resolvedStartTimes[i];
         const dur = track.duration || 180;
         const bpmSelf = track.bpm || 130;
+        const playOffset = trackPlayOffsets[i]; // Start playing from this point in the audio file
+        const effectiveDur = dur - playOffset;  // How long this track actually plays
 
         setWavProgress(Math.round(10 + (i / tracks.length) * 60));
 
@@ -345,7 +359,7 @@ export default function SetExportModal({
         hpfFilter.connect(gainNode);
         gainNode.connect(offlineCtx.destination);
 
-        // Calculate transition timings
+        // Calculate transition timings (in absolute set-time)
         let tInStart = 0;
         let tInDur = 0;
         let tInEnd = 0;
@@ -355,7 +369,7 @@ export default function SetExportModal({
           const sourceTimeSec = inTrans.sourceTimeSec !== undefined
             ? inTrans.sourceTimeSec
             : Math.max(0, (tracks[i - 1].duration || 180) - tInDur);
-          tInStart = resolvedStartTimes[i - 1] + sourceTimeSec;
+          tInStart = resolvedStartTimes[i - 1] + (sourceTimeSec - trackPlayOffsets[i - 1]);
           tInEnd = tInStart + tInDur;
         }
 
@@ -367,22 +381,23 @@ export default function SetExportModal({
           const sourceTimeSec = outTrans.sourceTimeSec !== undefined
             ? outTrans.sourceTimeSec
             : Math.max(0, dur - tOutDur);
-          tOutStart = trackStartSec + sourceTimeSec;
+          // sourceTimeSec is relative to track-local time; adjust for playOffset
+          tOutStart = trackStartSec + (sourceTimeSec - playOffset);
           tOutEnd = tOutStart + tOutDur;
         }
 
         // Apply gain & EQ automation
         if (i === 0) {
-          gainNode.gain.setValueAtTime(1.0, 0);
-          lowFilter.gain.setValueAtTime(0, 0);
-          midFilter.gain.setValueAtTime(0, 0);
-          highFilter.gain.setValueAtTime(0, 0);
-          hpfFilter.frequency.setValueAtTime(20, 0);
+          gainNode.gain.setValueAtTime(1.0, trackStartSec);
+          lowFilter.gain.setValueAtTime(0, trackStartSec);
+          midFilter.gain.setValueAtTime(0, trackStartSec);
+          highFilter.gain.setValueAtTime(0, trackStartSec);
+          hpfFilter.frequency.setValueAtTime(20, trackStartSec);
         } else {
           // Track B remains muted until incoming transition starts
-          gainNode.gain.setValueAtTime(0.0001, 0);
-          if (tInStart > 0) {
-            gainNode.gain.setValueAtTime(0.0001, Math.max(0, tInStart - 0.05));
+          gainNode.gain.setValueAtTime(0.0001, trackStartSec);
+          if (tInStart > trackStartSec) {
+            gainNode.gain.setValueAtTime(0.0001, Math.max(trackStartSec, tInStart - 0.05));
           }
 
           // In incoming transition (Track is Track B):
@@ -502,7 +517,7 @@ export default function SetExportModal({
           gainNode.gain.setValueAtTime(0.0001, tOutEnd);
         } else if (i === tracks.length - 1) {
           // Final track smooth fadeout at the end
-          const endT = trackStartSec + dur;
+          const endT = trackStartSec + effectiveDur;
           gainNode.gain.setValueAtTime(1.0, Math.max(0, endT - 3));
           gainNode.gain.linearRampToValueAtTime(0.0001, endT);
         }
@@ -534,9 +549,11 @@ export default function SetExportModal({
         }
 
         // Schedule playback from the calculated timeline start
-        srcNode.start(trackStartSec, 0, dur);
+        // playOffset = targetTimeSec: start reading the audio buffer from this point
+        // effectiveDur = how long the track actually plays in the mix
+        srcNode.start(trackStartSec, playOffset, effectiveDur);
         if (outTrans) {
-          srcNode.stop(tOutEnd + 1.0);
+          srcNode.stop(tOutEnd + 0.5);
         }
       }
 

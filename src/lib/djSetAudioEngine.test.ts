@@ -394,12 +394,12 @@ describe('DjSetAudioEngine - State Transitions and Logic', () => {
       expect(lastEvent.activeTransitionId).toBe('trans-1');
       expect(lastEvent.transitionProgress).toBeGreaterThan(0);
 
-      // 3. Time = 180s -> Track A after transition end
+      // 3. Time = 180s -> Track B solo after transition end (2-deck alternation)
       engine.seekSet(180);
-      expect(lastEvent.activeTrackIndex).toBe(0);
-      expect(lastEvent.activeTrackId).toBe('track-a');
+      expect(lastEvent.activeTrackIndex).toBe(1);
+      expect(lastEvent.activeTrackId).toBe('track-b');
       expect(lastEvent.activeTransitionId).toBeNull();
-      expect(lastEvent.crossfaderPosition).toBe(0);
+      expect(lastEvent.crossfaderPosition).toBe(1); // Deck B is the solo deck
     });
 
     it('should play Deck B when entering transition overlap while playing', async () => {
@@ -412,16 +412,17 @@ describe('DjSetAudioEngine - State Transitions and Logic', () => {
       expect(elements.audioB?.paused).toBe(false);
     });
 
-    it('should pause Deck B and reset crossfader when exiting transition overlap zone into solo zone', async () => {
+    it('should pause the outgoing deck when exiting transition overlap zone into solo zone', async () => {
       engine.initSet(tracks, transitions, 165);
       await engine.play();
 
       const elements = engine.getAudioElements();
       expect(elements.audioB?.paused).toBe(false);
 
-      // Seek out of transition into Deck A solo zone
+      // Seek past transition end -> Track B (index 1, odd) is now solo on Deck B
+      // Deck A (outgoing) should be paused
       engine.seekSet(180);
-      expect(elements.audioB?.paused).toBe(true);
+      expect(elements.audioA?.paused).toBe(true);
     });
 
     it('should handle empty set tracks gracefully in applySetStateAtTime and notifySetTime', () => {

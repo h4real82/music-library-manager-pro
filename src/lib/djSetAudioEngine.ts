@@ -415,6 +415,14 @@ export class DjSetAudioEngine {
   /**
    * Computes which tracks and transitions are active at set time `t`
    * and synchronizes AudioContext DSP nodes and HTMLAudioElements.
+   *
+   * Uses **real 2-deck alternation** like Traktor Pro / DJ.Studio:
+   *   Even-indexed tracks (0, 2, 4…) → Deck A
+   *   Odd-indexed tracks  (1, 3, 5…) → Deck B
+   *
+   * After each transition the finished deck is **stopped** and the
+   * next-next track is **preloaded** onto it so it is ready for the
+   * upcoming transition.
    */
   public applySetStateAtTime(timeSec: number) {
     if (this.setTracks.length === 0) return;
@@ -422,12 +430,15 @@ export class DjSetAudioEngine {
     // Build timeline layout
     interface TrackLayout {
       track: TrackDef;
+      index: number;           // position in the ordered set (0-based)
       startSec: number;
       durationSec: number;
       endSec: number;
-      transition?: TransitionConfig;
-      transitionStartSec?: number;
-      transitionEndSec?: number;
+      transition?: TransitionConfig;       // outgoing transition to next track
+      transitionStartSec?: number;         // absolute set-time where transition begins
+      transitionEndSec?: number;           // absolute set-time where transition ends
+      targetTimeSec: number;               // mixin offset inside THIS track (from incoming transition)
+      deck: 'A' | 'B';                     // which physical deck this track is assigned to
     }
 
     const layouts: TrackLayout[] = [];
@@ -438,6 +449,17 @@ export class DjSetAudioEngine {
       const duration = track.duration || 180;
       const nextTrack = this.setTracks[i + 1];
 
+      // Incoming transition: determine targetTimeSec for this track
+      let incomingTargetTimeSec = 0;
+      if (i > 0) {
+        const prevTrack = this.setTracks[i - 1];
+        const prevTrans = this.transitionMap.get(`${prevTrack.id}___${track.id}`) || this.transitionMap.get(prevTrack.id);
+        if (prevTrans?.targetTimeSec !== undefined) {
+          incomingTargetTimeSec = prevTrans.targetTimeSec;
+        }
+      }
+
+      // Outgoing transition to next track
       let trans: TransitionConfig | undefined;
       let transDurationSec = 0;
 
@@ -449,75 +471,139 @@ export class DjSetAudioEngine {
       }
 
       const startSec = accumulatedTime;
-      const endSec = startSec + duration;
+      const endSec = startSec + (duration - incomingTargetTimeSec);
 
       const mixoutSec = trans?.sourceTimeSec !== undefined
         ? trans.sourceTimeSec
         : Math.max(0, duration - transDurationSec);
-
-      const transStartSec = nextTrack ? startSec + mixoutSec : undefined;
+      // sourceTimeSec is relative to track-local time, convert to set-time
+      const transStartSec = nextTrack ? startSec + (mixoutSec - incomingTargetTimeSec) : undefined;
       const transEndSec = nextTrack && transStartSec !== undefined ? transStartSec + transDurationSec : undefined;
+
+      // Deck assignment: even index → A, odd index → B
+      const deck: 'A' | 'B' = (i % 2 === 0) ? 'A' : 'B';
 
       layouts.push({
         track,
+        index: i,
         startSec,
         durationSec: duration,
         endSec,
         transition: trans,
         transitionStartSec: transStartSec,
         transitionEndSec: transEndSec,
+        targetTimeSec: incomingTargetTimeSec,
+        deck,
       });
 
-      accumulatedTime = nextTrack && transStartSec !== undefined ? transStartSec : endSec;
-    }
-
-    // Find active track/transition
-    let activeTrackIdx = 0;
-    for (let i = 0; i < layouts.length; i++) {
-      if (timeSec >= layouts[i].startSec && timeSec <= layouts[i].endSec) {
-        activeTrackIdx = i;
-        break;
+      // Accumulated time: the NEXT track starts at transStartSec (overlap begins)
+      if (nextTrack && transStartSec !== undefined) {
+        accumulatedTime = transStartSec;
+      } else {
+        accumulatedTime = endSec;
       }
     }
 
-    const currentLayout = layouts[activeTrackIdx] || layouts[0];
-    const nextLayout = layouts[activeTrackIdx + 1];
+    // ─────────── Find active track at current set-time ───────────
+    // Forward search: find the first track whose range (startSec→endSec) contains
+    // the current time. During the overlap zone the outgoing track (lower index)
+    // is the "active" one because it owns the transition.
 
-    // Check if within transition
-    if (
-      currentLayout.transition && 
-      currentLayout.transitionStartSec !== undefined && 
+    let activeTrackIdx = layouts.length - 1; // fallback to last track
+    for (let i = 0; i < layouts.length; i++) {
+      if (timeSec >= layouts[i].startSec && timeSec < layouts[i].endSec) {
+        activeTrackIdx = i;
+        break;
+      }
+      // Handle edge: exactly at the end of the last track
+      if (i === layouts.length - 1 && timeSec >= layouts[i].startSec) {
+        activeTrackIdx = i;
+      }
+    }
+
+    const currentLayout = layouts[activeTrackIdx];
+    if (!currentLayout) return;
+
+    const nextLayout = layouts[activeTrackIdx + 1];
+    const prevLayout = activeTrackIdx > 0 ? layouts[activeTrackIdx - 1] : undefined;
+
+    // Helper: which deck plays a given track index
+    const deckFor = (idx: number): 'A' | 'B' => (idx % 2 === 0) ? 'A' : 'B';
+
+    // Helper: load track onto the correct deck
+    const loadOnDeck = (deck: 'A' | 'B', track: TrackDef, cueTimeSec: number) => {
+      if (deck === 'A') {
+        if (this.currentDeckATrack?.id !== track.id) {
+          this.loadDeckA(track, cueTimeSec);
+        }
+      } else {
+        if (this.currentDeckBTrack?.id !== track.id) {
+          this.loadDeckB(track, cueTimeSec);
+        }
+      }
+    };
+
+    const getAudio = (deck: 'A' | 'B') => deck === 'A' ? this.audioA : this.audioB;
+
+    // ─────────── Check if we are inside a transition overlap ───────────
+
+    const inTransition = (
+      currentLayout.transition &&
+      currentLayout.transitionStartSec !== undefined &&
       currentLayout.transitionEndSec !== undefined &&
       timeSec >= currentLayout.transitionStartSec &&
       timeSec <= currentLayout.transitionEndSec &&
       nextLayout
-    ) {
-      // IN TRANSITION OVERLAP ZONE: Both Deck A and Deck B active!
-      const trans = currentLayout.transition;
-      const transDurationSec = currentLayout.transitionEndSec - currentLayout.transitionStartSec;
-      const progress = Math.max(0, Math.min(1, (timeSec - currentLayout.transitionStartSec) / transDurationSec));
+    );
 
-      // Make sure Deck A is current track and Deck B is next track
-      if (this.currentDeckATrack?.id !== currentLayout.track.id) {
-        this.loadDeckA(currentLayout.track, timeSec - currentLayout.startSec);
-      }
-      if (this.currentDeckBTrack?.id !== nextLayout.track.id) {
-        this.loadDeckB(nextLayout.track, 0);
-      }
+    if (inTransition && nextLayout) {
+      // ── TRANSITION OVERLAP ZONE: both decks active ──
+      const trans = currentLayout.transition!;
+      const transDurationSec = currentLayout.transitionEndSec! - currentLayout.transitionStartSec!;
+      const progress = Math.max(0, Math.min(1, (timeSec - currentLayout.transitionStartSec!) / transDurationSec));
+
+      const outgoingDeck = currentLayout.deck;
+      const incomingDeck = nextLayout.deck;
+
+      // Load outgoing track onto its deck (should already be loaded)
+      const outgoingTrackTime = Math.max(0, timeSec - currentLayout.startSec + currentLayout.targetTimeSec);
+      loadOnDeck(outgoingDeck, currentLayout.track, outgoingTrackTime);
+
+      // Load incoming track onto its deck
+      const incomingTargetTime = nextLayout.targetTimeSec;
+      loadOnDeck(incomingDeck, nextLayout.track, incomingTargetTime);
 
       const sourceTimeSec = trans.sourceTimeSec !== undefined ? trans.sourceTimeSec : (currentLayout.durationSec - transDurationSec);
       const targetTimeSec = trans.targetTimeSec !== undefined ? trans.targetTimeSec : 0;
 
-      this.syncTransitionProgress(
-        progress,
-        trans.preset,
-        trans.envelopes,
-        trans.durationBeats,
-        sourceTimeSec,
-        targetTimeSec,
-        currentLayout.track.bpm || 130,
-        nextLayout.track.bpm || 130
-      );
+      // Use syncTransitionProgress but route to correct decks
+      // outgoingDeck = "Track A" in transition logic, incomingDeck = "Track B"
+      if (outgoingDeck === 'A') {
+        // Normal: Deck A is outgoing (Track A), Deck B is incoming (Track B)
+        this.syncTransitionProgress(
+          progress,
+          trans.preset,
+          trans.envelopes,
+          trans.durationBeats,
+          sourceTimeSec,
+          targetTimeSec,
+          currentLayout.track.bpm || 130,
+          nextLayout.track.bpm || 130
+        );
+      } else {
+        // Flipped: Deck B is outgoing (Track A), Deck A is incoming (Track B)
+        // We need to swap the DSP application
+        this.syncTransitionProgressFlipped(
+          progress,
+          trans.preset,
+          trans.envelopes,
+          trans.durationBeats,
+          sourceTimeSec,
+          targetTimeSec,
+          currentLayout.track.bpm || 130,
+          nextLayout.track.bpm || 130
+        );
+      }
 
       this.currentActiveTrackIndex = activeTrackIdx;
       this.currentActiveTrackId = currentLayout.track.id;
@@ -532,46 +618,146 @@ export class DjSetAudioEngine {
       );
 
       if (this.isPlaying) {
-        if (this.audioA && this.audioA.paused) this.audioA.play().catch(() => {});
-        if (this.audioB && this.audioB.paused) this.audioB.play().catch(() => {});
+        const audioOut = getAudio(outgoingDeck);
+        const audioIn = getAudio(incomingDeck);
+        if (audioOut && audioOut.paused) audioOut.play().catch(() => {});
+        if (audioIn && audioIn.paused) audioIn.play().catch(() => {});
       }
+
     } else {
-      // SOLO TRACK ZONE: Track A plays solo
-      if (this.currentDeckATrack?.id !== currentLayout.track.id) {
-        this.loadDeckA(currentLayout.track, Math.max(0, timeSec - currentLayout.startSec));
-      } else if (this.audioA) {
-        const targetTrackTime = Math.max(0, timeSec - currentLayout.startSec);
-        if (Math.abs(this.audioA.currentTime - targetTrackTime) > 0.75) {
-          this.audioA.currentTime = targetTrackTime;
+      // ── SOLO TRACK ZONE: only one deck plays ──
+
+      const soloDeck = currentLayout.deck;
+      const otherDeck: 'A' | 'B' = soloDeck === 'A' ? 'B' : 'A';
+
+      // Ensure current track is on its assigned deck at the correct position
+      const trackLocalTime = Math.max(0, timeSec - currentLayout.startSec + currentLayout.targetTimeSec);
+      loadOnDeck(soloDeck, currentLayout.track, trackLocalTime);
+
+      // Sync playback position
+      const soloAudio = getAudio(soloDeck);
+      if (soloAudio) {
+        if (Math.abs(soloAudio.currentTime - trackLocalTime) > 0.75) {
+          soloAudio.currentTime = trackLocalTime;
         }
+        soloAudio.playbackRate = 1.0; // Solo: natural tempo
       }
 
-      // Preload Deck B for next track if upcoming
-      if (nextLayout && this.currentDeckBTrack?.id !== nextLayout.track.id) {
-        this.loadDeckB(nextLayout.track, 0);
+      // The OTHER deck: pause it and preload the next upcoming track for that deck
+      const otherAudio = getAudio(otherDeck);
+      if (otherAudio && !otherAudio.paused) {
+        otherAudio.pause();
       }
 
-      // Set progress to 0 (Deck A solo unity, Deck B muted)
-      this.setProgress(0, 'bass-swap', undefined, 32);
-      if (this.audioB && !this.audioB.paused) {
-        this.audioB.pause();
+      // Preload: if we have a next track, it should go on the other deck
+      if (nextLayout) {
+        loadOnDeck(otherDeck, nextLayout.track, nextLayout.targetTimeSec);
+      }
+
+      // Set DSP: solo deck at unity, other deck muted
+      if (soloDeck === 'A') {
+        this.setProgress(0, 'bass-swap', undefined, 32);
+      } else {
+        // Deck B is the active solo deck → set progress to 1.0 (Deck B at unity)
+        this.setProgress(1, 'bass-swap', undefined, 32);
       }
 
       this.currentActiveTrackIndex = activeTrackIdx;
       this.currentActiveTrackId = currentLayout.track.id;
       this.currentIncomingTrackId = nextLayout ? nextLayout.track.id : undefined;
       this.currentActiveTransitionId = null;
-      this.currentCrossfaderPosition = 0;
+      this.currentCrossfaderPosition = soloDeck === 'A' ? 0 : 1;
       this.currentSetTransitionState = this.computeTransitionState(
-        0,
+        soloDeck === 'A' ? 0 : 1,
         'bass-swap',
         undefined,
         32
       );
 
-      if (this.isPlaying && this.audioA && this.audioA.paused) {
-        this.audioA.play().catch(() => {});
+      if (this.isPlaying && soloAudio && soloAudio.paused) {
+        soloAudio.play().catch(() => {});
       }
+    }
+  }
+
+  /**
+   * Like syncTransitionProgress but with decks FLIPPED:
+   * Deck B is the outgoing track (applies "A" envelopes to Deck B)
+   * Deck A is the incoming track (applies "B" envelopes to Deck A)
+   */
+  public syncTransitionProgressFlipped(
+    progress: number,
+    preset: TransitionPresetType,
+    envelopes?: TransitionEnvelopes,
+    durationBeats: number = 32,
+    sourceMixOutSec: number = 0,
+    targetMixInSec: number = 0,
+    bpmA: number = 130,
+    bpmB: number = 130
+  ) {
+    const p = Math.max(0, Math.min(1, progress));
+
+    // Compute the transition state normally
+    const state = this.computeTransitionState(p, preset, envelopes, durationBeats);
+
+    // Apply FLIPPED: deckA state goes to physical Deck B, deckB state to physical Deck A
+    if (this.ctx) {
+      const now = this.ctx.currentTime;
+      const ramp = 0.02;
+
+      // Physical Deck B gets the "outgoing" (deckA) parameters
+      if (this.gainB) this.gainB.gain.setTargetAtTime(state.deckA.volume, now, ramp);
+      if (this.lowB) this.lowB.gain.setTargetAtTime(state.deckA.eqLow > 0.01 ? 20 * Math.log10(state.deckA.eqLow) : -40, now, ramp);
+      if (this.midB) this.midB.gain.setTargetAtTime(state.deckA.eqMid > 0.01 ? 20 * Math.log10(state.deckA.eqMid) : -40, now, ramp);
+      if (this.highB) this.highB.gain.setTargetAtTime(state.deckA.eqHigh > 0.01 ? 20 * Math.log10(state.deckA.eqHigh) : -40, now, ramp);
+      if (this.filterB) {
+        this.filterB.frequency.setTargetAtTime(state.deckA.filterCutoff, now, ramp);
+        this.filterB.Q.setTargetAtTime(state.deckA.filterQ, now, ramp);
+      }
+
+      // Physical Deck A gets the "incoming" (deckB) parameters
+      if (this.gainA) this.gainA.gain.setTargetAtTime(state.deckB.volume, now, ramp);
+      if (this.lowA) this.lowA.gain.setTargetAtTime(state.deckB.eqLow > 0.01 ? 20 * Math.log10(state.deckB.eqLow) : -40, now, ramp);
+      if (this.midA) this.midA.gain.setTargetAtTime(state.deckB.eqMid > 0.01 ? 20 * Math.log10(state.deckB.eqMid) : -40, now, ramp);
+      if (this.highA) this.highA.gain.setTargetAtTime(state.deckB.eqHigh > 0.01 ? 20 * Math.log10(state.deckB.eqHigh) : -40, now, ramp);
+      if (this.filterA) {
+        this.filterA.frequency.setTargetAtTime(state.deckB.filterCutoff, now, ramp);
+        this.filterA.Q.setTargetAtTime(state.deckB.filterQ, now, ramp);
+      }
+    }
+
+    // Sync tempo: outgoing deck (B) runs at source BPM, incoming deck (A) syncs to it
+    if (this.audioB) this.audioB.playbackRate = 1.0;
+    if (this.audioA && bpmA > 0 && bpmB > 0) {
+      this.audioA.playbackRate = Math.max(0.5, Math.min(2.0, bpmA / bpmB));
+    }
+
+    // Sync playback positions
+    const secondsPerBeat = 60 / bpmA;
+    const totalTransitionDurationSec = durationBeats * secondsPerBeat;
+    const elapsedSec = p * totalTransitionDurationSec;
+
+    const offsetB = ((this.currentDeckBTrack?.beatgridOffsetMs || 0) / 1000);
+    const offsetA = ((this.currentDeckATrack?.beatgridOffsetMs || 0) / 1000);
+
+    // Deck B is outgoing: tracks sourceMixOutSec + elapsed
+    if (this.audioB && this.audioB.src) {
+      const targetTimeB = Math.max(0, sourceMixOutSec + elapsedSec + offsetB);
+      if (Math.abs(this.audioB.currentTime - targetTimeB) > 0.75) {
+        this.audioB.currentTime = targetTimeB;
+      }
+    }
+
+    // Deck A is incoming: tracks targetMixInSec + elapsed (tempo-adjusted)
+    if (this.audioA && this.audioA.src) {
+      const targetTimeA = Math.max(0, targetMixInSec + (elapsedSec * (bpmA / bpmB)) + offsetA);
+      if (Math.abs(this.audioA.currentTime - targetTimeA) > 0.75) {
+        this.audioA.currentTime = targetTimeA;
+      }
+    }
+
+    if (this.onStateChange) {
+      this.onStateChange(state);
     }
   }
 
