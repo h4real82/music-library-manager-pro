@@ -1,396 +1,284 @@
 # MuLiMa Pro — Music Library Manager Pro & DJ Set Studio
 
 <div align="center">
-  <h3>Professionelle KI-unterstützte Musik-Bibliothek, Harmonic Mixing & DJ Set Zeitleiste</h3>
-  <p>Entwickelt für DJs, Producer und Musik-Kuratoren zur nahtlosen Vorbereitung von Live-Sets mit echten Techno-Mixing-Techniken.</p>
+  <h3>Professionelle Musik-Bibliothek, Harmonic Mixing, 2D Track-Mapper & DJ Set Studio</h3>
+  <p>Entwickelt für DJs, Producer und Musik-Kuratoren zur nahtlosen Vorbereitung und Bearbeitung von DJ-Sets mit echten Mixing-Techniken.</p>
 </div>
 
 ---
 
-## ⚡ Schnellstart auf einem anderen PC
+## 📖 Über MuLiMa Pro
 
-Du möchtest **MuLiMa Pro** auf einem anderen PC (z. B. Windows-Laptop, MacBook oder Linux-Workstation) installieren und starten? Das geht in wenigen Schritten:
+**MuLiMa Pro** (Music Library Manager Pro) vereint die Bibliotheks- und Metadaten-Verwaltung professioneller DJ-Software (wie Rekordbox, Traktor oder Serato) mit der visuellen Mehrspur-Bearbeitung moderner DJ-Arrangement-Tools. 
 
-### 🖥️ Option 1: 1-Klick Start (Windows)
-1. Klone oder lade das Repository auf deinen PC herunter:
-   ```bash
-   git clone https://github.com/h4real82/music-library-manager-pro.git
-   ```
-2. Mache einen **Doppelklick auf `start.bat`**:
-   - Das Skript prüft automatisch Node.js.
-   - Installiert beim ersten Start alle benötigten Pakete (`npm install`).
-   - Erstellt den Musik-Ordner `LIBRARY\`.
-   - Öffnet deinen Browser automatisch auf `http://localhost:3000` und startet den Server.
+Die App analysiert deine Musiksammlung automatisch nach **BPM**, **Camelot-Tonarten** und **Struktur-Phrasen (Mixed In Key 11 Standard)**, platziert Tracks in einem **interaktiven 2D-Raster**, ermöglicht das Bauen von Sets in einem **visuellen Node-Netzwerk (Builder View)** oder auf einer **Mehrspur-Wellenform-Zeitleiste** und exportiert fertige Sets als **MP3-Mix**, **M3U-Playliste** oder **strukturierte Text-Trackliste**.
 
 ---
 
-### 💻 Option 2: Manuelle Installation (Windows, macOS, Linux)
+## 🚀 Schnellstart-Anleitung (Auch für absolute Beginner)
 
-#### Voraussetzungen
-- [Node.js](https://nodejs.org/) (Version 18 oder höher) **oder** [Bun](https://bun.sh/)
-- Ein moderner Webbrowser (Chrome, Edge, Brave, Firefox, Safari)
+Du kannst MuLiMa Pro direkt auf deinem eigenen PC oder Laptop nutzen. Es sind keine Programmierkenntnisse erforderlich!
 
-#### Schritte
+### 1. Einmalige Voraussetzung
+Um die App auf deinem Rechner auszuführen, benötigst du das kostenlose Programm **Node.js**:
+- Lade **Node.js** von der offiziellen Website herunter: 👉 **[https://nodejs.org/](https://nodejs.org/)** (wähle die empfohlene *LTS-Version*).
+- Führe das Installationsprogramm aus und klicke einfach auf *Weiter / Installieren*.
+
+---
+
+### 2. App herunterladen
+
+- Klicke oben rechts auf dieser GitHub-Seite auf den grünen Button **`Code`** und wähle **`Download ZIP`**.
+- Entpacke die heruntergeladene ZIP-Datei an einem beliebigen Ort auf deiner Festplatte (z. B. auf dem Desktop oder unter Dokumente).
+- *(Alternativ für Git-Nutzer: `git clone https://github.com/h4real82/music-library-manager-pro.git`)*
+
+---
+
+### 3. App mit 1 Klick starten
+
+#### 🪟 Unter Windows (1-Klick-Start):
+1. Öffne den entpackten Ordner `music-library-manager-pro`.
+2. Mache einen **Doppelklick auf `start.bat`**.
+3. **Das war's schon!** Das Skript richtet beim ersten Start automatisch alles ein, startet den Server und öffnet die App direkt in deinem Standard-Webbrowser unter **`http://localhost:3000`**.
+
+#### 🍎 Unter macOS & 🐧 Linux:
+1. Öffne das Terminal im Programmordner.
+2. Führe das Start-Skript aus:
+   ```bash
+   chmod +x start.sh
+   ./start.sh
+   ```
+3. Die App öffnet sich automatisch in deinem Browser unter **`http://localhost:3000`**.
+
+#### 💻 Manuelle Methode über das Terminal (für Fortgeschrittene):
+Falls du die Befehle lieber manuell eingeben möchtest:
 ```bash
-# 1. Repository klonen
-git clone https://github.com/h4real82/music-library-manager-pro.git
+# 1. In den Ordner wechseln
 cd music-library-manager-pro
 
 # 2. Abhängigkeiten installieren
 npm install
-# oder mit Bun:
-# bun install
+# (oder falls installiert: bun install)
 
-# 3. Entwicklungs-Server starten
+# 3. Server starten
 npm run dev
-# oder mit Bun:
-# bun run dev
+# (oder: bun run dev)
 ```
-Öffne anschließend [http://localhost:3000](http://localhost:3000) im Browser.
+Öffne anschließend deinen Browser und gehe auf: **[http://localhost:3000](http://localhost:3000)**
 
 ---
 
-### 🎵 Musikdateien hinzufügen
-Es gibt zwei einfache Wege, um deine Musiksammlung in die App zu laden:
+### 4. Musikdateien hinzufügen
 
-1. **Lokaler Ordner `LIBRARY/` (Empfohlen für Desktop-Betrieb)**:
-   - Kopiere deine MP3-, WAV-, FLAC-, AAC- oder OGG-Dateien direkt in den Ordner `LIBRARY/` im Projektverzeichnis (Unterordner werden automatisch rekursiv durchsucht).
-   - Die App liest Metadaten, BPM, Tonarten und Albumbilder direkt ein.
-2. **Web-Import im Browser (HTML5 File API)**:
-   - Klicke in der App oben links auf **"Library Manager"** oder den Import-Button.
-   - Wähle **"Dateien importieren"** oder **"Ganzen Ordner importieren"**, oder ziehe Audio-Dateien per **Drag & Drop** in das Browser-Fenster.
+Es gibt zwei kinderleichte Wege, um deine Musik in die App zu laden:
 
----
-
-## 🌐 Direkt im Browser betreiben über GitHub Pages
-
-**MuLiMa Pro kann vollständig serverlos als moderne Web-App über GitHub Pages betrieben werden!**
-
-Da die Audio-Engine, Wellenform-Generierung, Takt-Analyse und Set-Verwaltung auf **HTML5 Web Audio API** und **IndexedDB** basieren, läuft die App nach dem Deployment direkt im Browser:
-
-### So aktivierst du GitHub Pages für dein Repository:
-
-#### Option A: Automatisch über GitHub Actions
-1. Gehe in deinem GitHub-Repository auf den Tab **Actions** ➔ **New workflow** ➔ **set up a workflow yourself**.
-2. Nenne die Datei `deploy.yml` und füge folgenden Inhalt ein:
-   ```yaml
-   name: Deploy to GitHub Pages
-   on:
-     push:
-       branches: [main]
-   permissions:
-     contents: read
-     pages: write
-     id-token: write
-   concurrency:
-     group: 'pages'
-     cancel-in-progress: true
-   jobs:
-     build-and-deploy:
-       environment:
-         name: github-pages
-         url: ${{ steps.deployment.outputs.page_url }}
-       runs-on: ubuntu-latest
-       steps:
-         - uses: actions/checkout@v4
-         - uses: actions/setup-node@v4
-           with:
-             node-version: 20
-         - run: npm install
-         - run: npm run build
-         - uses: actions/configure-pages@v4
-         - uses: actions/upload-pages-artifact@v3
-           with:
-             path: './dist'
-         - id: deployment
-           uses: actions/deploy-pages@v4
-   ```
-3. Gehe im Repository auf **Settings** ➔ **Pages** und stelle unter **Build and deployment / Source** auf **`GitHub Actions`** um.
-4. Deine Web-App ist unter folgender URL live erreichbar:
-   ```
-   https://h4real82.github.io/music-library-manager-pro/
-   ```
-
-#### Option B: Lokaler Build & Push auf den `gh-pages` Branch
-Falls du Actions nicht nutzen möchtest, kannst du die gebauten Dateien direkt deployen:
-```bash
-npm run build
-npx gh-pages -d dist
-```
-
-> 💡 **Hinweis zum Betrieb auf GitHub Pages**:  
-> Auf GitHub Pages läuft die App **100% autark im Browser**. Da kein lokaler Node-Server für den Festplatten-Ordner `LIBRARY/` vorhanden ist, lädst du deine Musikdateien einfach per Drag & Drop oder über *"Dateien / Ordner importieren"* in die App. Alle Analysen, BPM, Camelot-Tonarten, 720-Slice-Wellenformen und Sets werden in der lokalen Browser-Datenbank (**IndexedDB**) sicher gespeichert.
+1. **Über den Musikordner `LIBRARY/` (Empfohlen für große Sammlungen)**:
+   - Kopiere deine Audio-Dateien (MP3, WAV, FLAC, AAC, OGG) direkt in den im Hauptverzeichnis liegenden Ordner **`LIBRARY/`** (auch Unterordner werden automatisch durchsucht).
+   - Die App erkennt die Dateien beim nächsten Start sofort und liest Cover, Titel, Künstler und Tonarten ein.
+2. **Direkt per Drag & Drop im Browser**:
+   - Ziehe Audio-Dateien oder ganze Ordner einfach mit der Maus in das Browserfenster von MuLiMa Pro.
+   - Alternativ kannst du in der App oben links auf **"Library Manager"** klicken und Dateien oder Ordner auswählen.
 
 ---
 
-## 🎛️ Walkthrough: Alle Funktionen im Überblick
-
-MuLiMa Pro vereint die Bibliotheksverwaltung von Rekordbox/Traktor mit der visuellen Mehrspur-Bearbeitung von Mixmeister und DJ.Studio. Nachfolgend findest du einen detaillierten Rundgang durch alle Hauptmodule der App.
+## 🎛️ Die Besonderheiten & Funktionen im Überblick
 
 ---
 
 ### 1. Track Mapper Matrix (2D-Harmonie- & BPM-Raster)
-Die **Track Mapper Matrix** ordnet alle Tracks der Musiksammlung als interaktive Punkte in einem zweidimensionalen Koordinatenraster an, um musikalisch zusammenpassende Tracks auf einen Blick zu erkennen:
 
-- **Frei konfigurierbare X- und Y-Achsen**:
-  - **Optionen**: `Key (Camelot Tonart)`, `BPM (Tempo)`, `Energy (1 - 10)`, `Mood (Stimmung)`, `Genre (Stilrichtung)`.
-  - **Gegenseitiger Ausschluss (Mutual Exclusivity)**: X und Y können niemals dieselbe Eigenschaft belegen. Wählt man auf einer Achse den Wert der anderen, tauschen sie automatisch die Plätze.
-  - **Achsen-Tausch-Button (`⇄`)**: Ein Klick tauscht die Dimensionen sofort um.
-- **Stufenlose Zoom- & Pan-Engine (Entzerrung dichter Cluster)**:
-  - **Cursor-zentrierter Mausrad-Zoom (0.8x bis 5.0x)**: Hinein- und Herauszoomen direkt auf den Mauszeiger fokussiert.
-  - **Toolbar-Steuerung**: `[-]`, `[+]` sowie Prozentanzeige mit **1-Klick-Reset auf `100%`**.
-  - **Verschieben (Pan)**: Umschaltbarer Werkzeugmodus (`[🎯 Lasso]` vs. `[✋ Pan]`) oder flexibel per **Rechtsklick-Ziehen**, **Mittelklick-Ziehen** oder **Leertaste + Ziehen**.
-  - **Inverse Punkt-Skalierung**: Punkte weichen beim Zoom physikalisch auseinander, bleiben aber nadelfein und gestochen scharf.
-- **Maus-Lasso / Einkreisen & Floating Bulk HUD**:
-  - Ziehe mit der Maus eine beliebige Form um mehrere Punkte, um sie einzukreisen.
-  - Eingekreiste Tracks leuchten mit smaragdgrünem Neon-Ring auf.
-  - Das schwebende **Bulk Action HUD** bietet Sofortaktionen:
-    - **`+ Zur Playlist hinzufügen`**: Übernimmt alle markierten Tracks direkt in das aktuelle DJ-Set.
-    - **`▶ Abspielen`**: Spielt den ersten Track der Auswahl sofort an.
-    - **`✕ Aufheben`** (oder `Esc`): Löscht die Markierung.
-- **Interaktive Hover-Cards & Farb-Modi**:
-  - Überfahren eines Punktes zeigt eine detailreiche Tooltip-Karte mit Cover, Titel, Artist, Key-Badge, BPM, Energy und Stilrichtung.
-  - Umschaltbare Punktfarben nach **Camelot Key**, **Energy-Level (1-10)** oder **Genre**.
+Die **Track Mapper Matrix** visualisiert deine gesamte Musiksammlung auf einem interaktiven 2D-Koordinatenfeld. So siehst du auf einen Blick, welche Tracks harmonisch und vom Tempo her perfekt zueinander passen:
+
+- **Standardansicht X = BPM, Y = Camelot Key**: Die horizontale Achse zeigt die Geschwindigkeit (BPM), die vertikale Achse die Tonart (1A bis 12B). Beide Achsen lassen sich flexibel auf *Energy*, *Genre* oder *Mood* umschalten oder per Knopfdruck (`⇄`) tauschen.
+- **Anti-Kollisions-Layout (Kein Überlappen)**: Ein physikalischer Relaxations-Algorithmus fächert Tracks mit identischem BPM und Key automatisch in einer harmonischen Rosette auf. Keine Punkte verdecken sich gegenseitig!
+- **Miniatur-Cover-Thumbnails**: Jeder Track wird als kleines Album-Cover mit farbigem Camelot-Rahmen und Key-Badge dargestellt.
+- **Stufenloser Zoom & Pan (0.8x bis 5.0x)**: Zoome mit dem Mausrad stufenlos in dichte Cluster hinein und bewege das Raster per Rechtsklick-Ziehen oder Leertaste.
+- **Maus-Lasso**: Zeichne mit der Maus eine beliebige Schleife um Tracks, um sie gemeinsam auszuwählen und per Klick direkt in dein DJ-Set zu übernehmen.
 
 <div align="center">
-  <img src="docs/screenshots/screenshot_mapper_bpm_energy.png" alt="Track Mapper Matrix: BPM vs Energy" width="90%" />
-  <p><em>Track Mapper Matrix: BPM vs. Energy mit Camelot-Farben</em></p>
+  <img src="docs/screenshots/screenshot_mapper_bpm_energy.png" alt="Track Mapper Matrix" width="90%" />
+  <p><em>Track Mapper Matrix: 2D-Rasteransicht mit harmonischer Farbcodierung und Live-Zoom</em></p>
 </div>
 
 <div align="center">
-  <img src="docs/screenshots/screenshot_mapper_zoomed_in.png" alt="Track Mapper Zoom: Entzerrte Cluster bei 169%" width="90%" />
-  <p><em>Stufenloser Zoom (169%): Dichte Cluster entzerren sich in gut klickbare Einzeltracks</em></p>
+  <img src="docs/screenshots/screenshot_mapper_zoomed_lasso.png" alt="Track Mapper Lasso Auswahl" width="90%" />
+  <p><em>Maus-Lasso: Tracks einfach mit der Maus einkreisen und gesammelt ins Set laden</em></p>
 </div>
 
 <div align="center">
-  <img src="docs/screenshots/screenshot_mapper_zoomed_lasso.png" alt="Track Mapper: Zoomed Lasso Selection mit Bulk Action HUD" width="90%" />
-  <p><em>Maus-Lasso-Einkreisen: 43 ausgewählte Tracks mit Neon-Glow und schwebendem Playlist-Aktions-HUD</em></p>
-</div>
-
-<div align="center">
-  <img src="docs/screenshots/screenshot_mapper_zoomed_tooltip.png" alt="Track Mapper: Detail-Hover-Card im Zoom" width="90%" />
-  <p><em>Akkurate Hover-Card: Dynamische Anzeige aller Track-Parameter ohne Verzerrung</em></p>
+  <img src="docs/screenshots/screenshot_mapper_zoomed_tooltip.png" alt="Track Mapper Detail-Hover-Card" width="90%" />
+  <p><em>Hover-Card: Detailanzeige aller Parameter (BPM, Key, Energy, Genre) beim Überfahren mit der Maus</em></p>
 </div>
 
 ---
 
-### 2. Musik-Bibliothek: List View & Kuration
-Die Bibliotheksansichten bieten maximale Übersicht für umfangreiche Musiksammlungen:
+### 2. Builder View (Interaktives DJ-Node-Netzwerk)
 
-- **Getrennte, voll sortierbare Spalten**:
-  - **Interpret & Titel**: Sauber in zwei Spalten separiert mit A–Z und Z–A Sortierung per Klick auf die Kopfzeile.
-  - **BPM & Energy**: Schnelle Sortierung nach Geschwindigkeit oder Intensität.
-  - **Genre & Mood**: Getrennt voneinander filter- und sortierbar.
-- **Interaktives Camelot Wheel mit Multi-Notation-Normalisierung**:
-  - 1-Klick-Filterung auf jede der 24 Tonarten (1A–12B).
-  - Erkennt nahtlos Rekordbox/OpenKey (`11m` ➔ `11A`, `7d` ➔ `7B`), musikalische Noten (`Am`, `F#m`) sowie Traktor/Camelot.
-  - Anzeige des standardisierten Camelot-Codes samt Original-Bibliotheksnotation in der Tabelle (z. B. `11A (11m)`).
-  - Prominenter Filter-Chip mit 1-Klick-Reset (`Key: 11A ✕`) in der Toolbar.
-- **Camelot Wheel Harmonische Farben**:
-  - Jede Tonart erstrahlt in der exakten Farbe des Camelot-Rads (z. B. 8A = Dunkelrot, 9A = Magenta, 11A = Violett, etc.).
-- **10-stufige Energy-Badges**:
-  - Farbverlauf von Chilled (1/10) bis Peaktime (10/10) identisch mit den Filtern in der linken Seitenleiste.
-- **Spalten-Konfigurator**:
-  - Über das Zahnrad-Symbol können beliebige Spalten (Cover, Titel, Interpret, Album, BPM, Key, Energy, Genre, Mood, Dauer, Aktionen) individuell ein- oder ausgeblendet werden.
-- **Intelligente Duplikate-Bereinigung**:
-  - Findet Dubletten anhand von ID3-Tags, Bitraten und Audio-Signaturen und entfernt diese sicher.
+In der **Builder View** baust du dein DJ-Set als visuelles Netzwerk aus miteinander verknüpften Track-Knoten auf:
 
-<div align="center">
-  <img src="docs/screenshots/screenshot_camelot_filtered_11A.png" alt="Camelot Wheel Filter aktiv: 11A mit passenden Tracks in violett" width="90%" />
-  <p><em>Interaktives Camelot Wheel: 1-Klick-Filterung nach 11A mit Rekordbox-Normalisierung (11m) und aktiver Filter-Pille</em></p>
-</div>
-
-<div align="center">
-  <img src="docs/screenshots/screenshot_camelot_filtered_10A.png" alt="Camelot Wheel Filter aktiv: 10A mit 24 gefilterten Tracks in magenta" width="90%" />
-  <p><em>Camelot Wheel: 10A-Filterung (10m / Bm Moll) mit 100% Farb- und Notations-Synchronität</em></p>
-</div>
-
-<div align="center">
-  <img src="docs/screenshots/screenshot_list_view_separated_sorted.png" alt="List View: Getrennte Spalten und Camelot-Sortierung" width="90%" />
-  <p><em>DJ List View: Getrennte Spalten für Interpret/Titel, BPM-Sortierung und harmonische Camelot-Farben</em></p>
-</div>
-
-<div align="center">
-  <img src="docs/screenshots/screenshot_column_customizer.png" alt="List View: Spalten-Konfigurator" width="90%" />
-  <p><em>Spalten-Konfigurator: Benutzerdefinierte Tabellenansicht mit flexibler Sichtbarkeit</em></p>
-</div>
-
-<div align="center">
-  <img src="docs/screenshots/screenshot_list_view_cue_points.png" alt="List View: Cue Points Spalte nach Mixed In Key 11" width="90%" />
-  <p><em>List View: Neue CUE POINTS Spalte mit Mixed In Key 11 Badges und direkter Sortierfunktion</em></p>
-</div>
-
----
-
-### 3. Vorhörfunktion & Interaktiver Scrubber (Echtzeit-Playhead mit Maus-Dragging)
-Die Vorhörfunktion am unteren Bildschirmrand bietet blitzschnelles Vorhören und präzises Scrubbing ohne Verzögerung:
-
-- **Maus-verschiebbarer Positionspunkt (Playhead-Thumb)**:
-  - Der weiße Playhead-Punkt mit lila Leuchtkranz kann per Maus gedrückt und stufenlos entlang der Wellenform gezogen werden (`Real-time Drag Scrubbing`).
-  - Selbst wenn der Mauszeiger beim Ziehen das Element verlässt, verfolgt die Audio-Engine die Mausposition flüssig (`Window Event Listener`).
-- **Live Timestamp Tooltip**:
-  - Beim Überfahren oder Verschieben zeigt ein dynamischer Tooltip exakt die Zielzeit an (z. B. `2:03`).
-- **Mixed In Key 11 CUE-Point Ticks**:
-  - Bis zu 8 CUE-Punkte (`CUE 1` bis `CUE 8`) sind direkt auf der Fortschrittsleiste als Sprungmarken sichtbar.
-  - Die Prev/Next-Tasten springen präzise von CUE zu CUE.
-- **Klickbare Makro-Bereiche**:
-  - Unter dem Scrubber liegt der lückenlose Bereichsstreifen (*Intro, Bassline, Verse, Build-Up, Main Drop, Breakdown, Peak Drop, Outro*). Ein Klick auf ein Segment springt sofort an dessen Taktanfang!
-- **Entkoppelter Studio-Button**:
-  - Kein Klick-Konflikt mehr: Neben Cover und Tracktitel öffnet ein dezidierter `[Studio]`-Button direkt die Detail-Analyse, während Klicks auf die Zeitleiste ausschließlich die Wiedergabe steuern.
-
-<div align="center">
-  <img src="docs/screenshots/screenshot_vorhoer_draggable_scrubber.png" alt="Vorhörfunktion mit verschiebbarem Playhead und Makro-Bereichen" width="90%" />
-  <p><em>Vorhörfunktion: Verschiebbare Abspielposition, Live-Hover-Tooltip, 8 CUE-Ticks und farbcodierte Makro-Bereiche</em></p>
-</div>
-
----
-
-### 4. Track-Analyse & Precision Deck Studio (Mixed In Key 11 CUE-Engine)
-Klicke bei einem beliebigen Track auf **"Studio"**, um in das professionelle Analyse- und Vorbereitungsdeck zu wechseln:
-
-- **Mixed In Key 11 Phrasing & Struktur-Erkennung**:
-  - Intelligente Erkennung musikalischer Formteile, quantisiert auf 4-Takt- (16 Beats) und 8-Takt-Downbeat-Phrasen (32 Beats).
-  - Erkennt echte Frequenz- und Energie-Wendepunkte (Multi-Band Sub/Kick-Einstiege, Melodie/Vocal-Einsätze und High-Frequency Risers).
-  - Deckt 100 % der Trackdauer mit kontinuierlichen Abschnitten ab (*Intro, Bassline, Verse 1, Build-Up 1, Main Drop 1, Breakdown, Peak Drop 2, Outro*).
-- **8 CUE Points nach Mixed In Key Vorbild**:
-  - CUE 1 bis CUE 8 sitzen wie im Hardware-/Software-Vorbild als dunkle Header-Badges (`[CUE 1]` .. `[CUE 8]`) mit senkrechten Farblinien über der Übersichtswellenform.
-  - Jeder CUE-Badge auf der Übersichtsleiste kann direkt angeklickt werden, um die Nadel sofort darauf zu sperren.
-- **Interaktive Übersichtswellenform (Overview Stripe)**:
-  - Kann ebenfalls per Mausklick und -drag verschoben werden, um den Zoom-Ausschnitt und die Wiedergabe im Handumdrehen zu steuern.
-- **720-Slice Fluid Waveform**:
-  - Dreifarbig differenzierte Frequenzbänder (Rot = Bass, Grün = Mitten, Blau = Höhen).
-- **Dynamische Loop-Slots**:
-  - Setze Live-Loops mit 1, 2, 4, 8, 16 oder 32 Beats. Gespeicherte Loops ordnen sich automatisch chronologisch in die Track-Struktur ein.
-- **3-Band Spektrum Visualizer & DSP EQ-Rack**:
-  - Bouncing Pegelanzeige mit 3-Band Equalizer und Kill-Switches für Bässe, Mitten und Höhen.
-- **Präzisions-Taktgitter & Transienten-Synchronität (Downbeat Anchor & Beatlines)**:
-  - Jeder Taktstrich (Downbeat 1, 2, 3, 4 sowie Sub-Beats .2, .3, .4) ist **mathematisch zentriert auf den Spitzenwerten (Transienten-Ausschlägen)** der Wellenform verankert.
-  - Phasen-Offsets und Nudges verschieben Gitterlinien und Transienten harmonisch im Einklang, sodass zwei Tracks absolut phasenstarr synchronisiert werden können.
-
-<div align="center">
-  <img src="docs/screenshots/screenshot_precision_beatgrid_aligned.png" alt="Precision Waveform: Taktstriche exakt auf den Transienten-Ausschlägen" width="90%" />
-  <p><em>Precision Waveform: Beatgrid-Taktstriche (1, .2, .3, .4, 2, ...) sitzen zentimetergenau im Zentrum der Kick-Ausschläge</em></p>
-</div>
-
-<div align="center">
-  <img src="docs/screenshots/screenshot_precision_beatgrid_tab_aligned.png" alt="Takt-Gitter Tab mit kalibriertem Downbeat-Anchor" width="90%" />
-  <p><em>Takt-Gitter Tab: Tempo-Stabilität (99%), Downbeat Anchor und kalibriertes 4/4 Raster mit mikrosekundengenauer Taktstrich-Ausrichtung</em></p>
-</div>
-
-<div align="center">
-  <img src="docs/screenshots/screenshot_mixed_in_key_cues_and_sections.png" alt="Track-Analyse Studio mit Mixed In Key 11 CUE Points und Sektionen" width="90%" />
-  <p><em>Studio Analyse View: 8 CUE Points nach Mixed In Key 11 Vorbild mit vertikalen Trennlinien und lückenlosen Makro-Sektionen</em></p>
-</div>
-
----
-
-### 4. DJ Graph Map (Visuelles Node-Netzwerk)
-Erstelle dein DJ-Set als interaktives visuelles Netzwerk:
-
-- **2D-Netzwerk-Canvas mit Zoom & Pan**:
-  - Frei verschiebbare Track-Knoten mit Ein- und Ausgangs-Ports für jeden CUE- und Loop-Slot.
-- **Stabiles Verbinden (Click-to-Connect & Drag-and-Drop)**:
-  - Klicke auf den Ausgangs-Port von Track A; kompatible Ziel-Ports an Track B pulsieren grün. Ein Klick auf Track B stellt die Verbindung her.
-- **5 Techno-Übergangstechniken als Presets**:
-  1. 🎚️ **EQ-Wechsel (Equalizer Blend)**: Gleichmäßiger Frequenztausch über 32/64 Beats.
-  2. ⚡ **Bass-Swap (Instant Low-End Switch)**: Schlagartiger Tausch des Bassbereichs exakt auf dem ersten Beat ("auf die Eins").
-  3. 🌊 **Filter-Sweep (HPF Transition)**: Resonanter High-Pass-Filter fährt hoch und dünnt Track A dramatisch aus.
+- **Knoten & Audio-Ports**: Jeder Track besitzt Ein- und Ausgangs-Ports für seine CUE-Punkte und Loop-Sektionen.
+- **Click-to-Connect**: Klicke auf den Ausgangs-Port von Track A und verbinde ihn mit dem Startpunkt von Track B.
+- **5 echte Techno-Übergangstechniken**:
+  1. 🎚️ **EQ-Wechsel (Equalizer Blend)**: Gleichmäßiger Frequenztausch über 32 oder 64 Beats.
+  2. ⚡ **Bass-Swap (Instant Low-End Switch)**: Schlagartiger Tausch des Basses exakt auf dem ersten Beat ("auf die Eins").
+  3. 🌊 **Filter-Sweep (HPF Transition)**: Resonanter Hochpassfilter dünnt Track A dramatisch aus.
   4. ✂️ **Cut / Drop (Fader Slam)**: Abrupter Wechsel ohne Überlappung bei Drops.
   5. 📈 **Gain Crossfade (Equal-Power)**: Konstanter Schalldruck über die gesamte Überblendung.
 
 <div align="center">
-  <img src="docs/screenshots/screenshot_node_graph_connected.png" alt="DJ Graph Map Node Netzwerk" width="90%" />
-  <p><em>DJ Graph Map: Verbundenes Set-Netzwerk mit konfigurierbaren Techno-Übergangskurven</em></p>
+  <img src="docs/screenshots/screenshot_node_graph_connected.png" alt="Builder View DJ Node Netzwerk" width="90%" />
+  <p><em>Builder View: Visuelle Verknüpfung von Tracks mit konfigurierbaren Übergangskurven</em></p>
 </div>
 
 ---
 
-### 5. Waveform Timeline Studio (Mehrspur-Zeitleiste)
-Die Mehrspur-Zeitleiste erlaubt das zentimetergenaue Arrangieren von Übergängen:
+### 3. Waveform Timeline Studio (Mehrspur-Zeitleiste)
 
-- **Master-Playhead & synchronisierte DJ-Decks**:
-  - Ein hochpräziser vertikaler Playhead gleitet flüssig über das Zeitlineal und alle Trackspuren hinweg.
-  - Mit aktuellem Zeitstempel-Badge im Lineal, 1-Klick-Lineal-Seek und direkter Synchronisation mit den unteren Decks (Deck A/B ON AIR und Meter-Aktivität).
-- **Horizontales Verschieben mit Beatgrid-Snap**:
-  - Packe eine Wellenform und bewege sie horizontal. Track B rastet automatisch im 4-Takt-Raster relativ zu Track A ein.
-- **Stationärer Übergangsrahmen & `[▶ Cue Mix]`**:
-  - Der Übergangsrahmen bleibt am Ausgangspunkt von Track A verankert, während Track B darunter gleitet.
-  - Der `[▶ Cue Mix]`-Button springt sofort an den Startpunkt des Übergangs für ein schnelles Probehören.
-- **Waveform Transition Overlap Studio**:
-  - Klicke auf **"Hüllkurven"**, um die 3-Band EQ-Kurven (Bass = Orange, Mitten = Gelb, Höhen = Cyan) mit Kontrollpunkten punktgenau zu modellieren.
+Das Mehrspur-Studio ermöglicht das zentimetergenaue Arrangieren deiner Übergänge auf einer echten Zeitleiste:
+
+- **Master-Playhead**: Ein vertikaler Playhead gleitet flüssig über das Zeitlineal und steuert synchron die beiden DJ-Decks.
+- **Verschieben mit Takt-Einrasten (Beatgrid-Snap)**: Verschiebe Trackspuren horizontal – sie rasten automatisch im 4-Takt-Raster zueinander ein, sodass die Kicks exakt synchron laufen.
+- **Verschiebbares Übergangsfenster & `[▶ Cue Mix]`**: Das Übergangsfenster zeigt genau die Stelle, an der der Wechsel stattfindet. Mit dem *Cue Mix*-Button kannst du den Übergang sofort probehören.
+- **Transition Overlap Studio mit 3-Band EQ-Hüllkurven**: Modelliere Bass- (Orange), Mitten- (Gelb) und Höhen-Kurven (Cyan) mit flexiblen Kontrollpunkten.
 
 <div align="center">
-  <img src="docs/screenshots/screenshot_waveform_timeline_playing_verified.png" alt="Waveform Timeline mit aktivem Master Playhead und ON AIR Deck" width="90%" />
-  <p><em>Waveform Timeline Studio: Live laufender Master-Playhead mit Zeit-Badge, Wellenspuren und synchronisiertem ON AIR Deck A</em></p>
+  <img src="docs/screenshots/screenshot_waveform_timeline_playing_verified.png" alt="Waveform Timeline Studio mit Master Playhead" width="90%" />
+  <p><em>Waveform Timeline: Mehrspur-Zeitleiste mit synchronem Master-Playhead und aktiven DJ-Decks</em></p>
 </div>
 
 <div align="center">
-  <img src="docs/screenshots/screenshot_waveform_timeline_transition_cue.png" alt="Waveform Timeline Studio mit Cue Mix" width="90%" />
-  <p><em>Waveform Timeline Studio: Übergangsrahmen mit Hüllkurven und Cue Mix Button</em></p>
-</div>
-
-<div align="center">
-  <img src="docs/screenshots/screenshot_waveform_overlap_studio_verified.png" alt="Waveform Overlap Studio" width="90%" />
-  <p><em>Transition Overlap Studio: Detail-Bearbeitung von Frequenzkurven und Lautstärken</em></p>
+  <img src="docs/screenshots/screenshot_waveform_overlap_studio_verified.png" alt="Transition Overlap Studio" width="90%" />
+  <p><em>Transition Overlap Studio: Präzise Bearbeitung von 3-Band EQ-Hüllkurven und Lautstärken</em></p>
 </div>
 
 ---
 
-### 6. Taktgitter- & Phasen-Reparatur Studio
-Behebt asynchrone Takte und unsaubere Phasen im Handumdrehen:
+### 4. Musik-Bibliothek: Cover View & List View
 
-- **Phase Nudge**: Manuelle Phasenverschiebung um `±10 ms`, `±1/4 Beat` oder `±1 Beat`.
-- **Auto Phase-Lock**: Synchronisiert die Phase von Deck B vollautomatisch mit Deck A.
-- **Takt-Eins Neuausrichtung**: Setzt den Downbeat exakt an die aktuelle Nadelposition.
-- **Akustisches Metronom**: Integrierter Klick-Generator zum hörbaren Takt-Abgleich.
+Verwalte und kuratiere selbst riesige Musikbibliotheken blitzschnell:
+
+- **Cover View & List View**: Wähle zwischen großen Cover-Kacheln oder einer kompakten, voll sortierbaren Tabellenansicht.
+- **Getrennte Spalten**: Interpret, Titel, BPM, Key, Energy, Genre, Mood und Trackdauer lassen sich separat per Klick auf die Kopfzeile sortieren.
+- **Spalten-Konfigurator**: Blende über den *Spalten*-Button beliebige Spalten ein oder aus.
+- **Fokussierte Arbeitsfläche**: Die linke Seitenleiste mit Playlisten, Gruppen und Filtern wird in der *Builder View* und im *Mapper* automatisch ausgeblendet, damit du die volle Bildschirmbreite nutzen kannst.
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_list_view_separated_sorted.png" alt="DJ List View mit getrennten Spalten" width="90%" />
+  <p><em>List View: Sortierbare Spalten für Interpret/Titel, BPM-Sortierung und Camelot-Farben</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_column_customizer.png" alt="Spalten-Konfigurator" width="90%" />
+  <p><em>Spalten-Konfigurator: Individuelle Anpassung der Tabellenspalten</em></p>
+</div>
+
+---
+
+### 5. Interaktives Camelot Wheel (Harmonisches Mixing)
+
+Finde sekundenschnell Tracks, die musikalisch perfekt harmonieren:
+
+- **1-Klick-Filter**: Klicke auf ein Kreissegment des Camelot Wheel, um die gesamte Bibliothek auf diese Tonart zu filtern.
+- **Multi-Notations-Erkennung**: Erkennt automatisch Formate aus Rekordbox (`11m` ➔ `11A`, `7d` ➔ `7B`), musikalische Tonarten (`Am`, `F#m`) sowie Traktor/OpenKey und wandelt sie in den standardisierten Camelot-Code um.
+- **Harmonische Farbkennzeichnung**: Jede Tonart erstrahlt in der unverwechselbaren Farbe des Camelot-Kreises.
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_camelot_filtered_11A.png" alt="Camelot Wheel Filter 11A aktiv" width="90%" />
+  <p><em>Camelot Wheel: 1-Klick-Filterung nach 11A mit Rekordbox-Normalisierung (11m)</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_camelot_filtered_10A.png" alt="Camelot Wheel Filter 10A aktiv" width="90%" />
+  <p><em>Camelot Wheel: Tonart 10A mit Farb- und Notations-Synchronität</em></p>
+</div>
+
+---
+
+### 6. Track-Analyse Studio & Precision Waveform (Mixed In Key 11)
+
+Klicke bei einem Track auf **"Studio"**, um in das detaillierte Analyse- und Vorbereitungsdeck zu wechseln:
+
+- **720-Slice Dreifarben-Wellenform**: Frequenzgetrennte Darstellung (Rot = Bass/Sub, Grün = Mitten/Vocals, Blau = Höhen/Hi-Hats).
+- **8 automatische CUE-Punkte nach Mixed In Key Vorbild**: Erkennt Phrasenwechsel und Strukturteile (*Intro, Bassline, Verse, Build-Up, Drop, Breakdown, Outro*).
+- **Präzisions-Taktgitter (Beatgrid Anchor)**: Taktstriche sitzen mathematisch exakt auf den Kick-Transienten und lassen sich per Doppelklick und Nudge feinjustieren.
+- **Dynamic Loops & 3-Band EQ**: Setze Live-Loops mit 1 bis 32 Beats und nutze den integrierten Equalizer mit Kill-Switches.
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_precision_beatgrid_aligned.png" alt="Precision Waveform mit Beatgrid" width="90%" />
+  <p><em>Precision Waveform: Taktstriche sitzen zentimetergenau im Zentrum der Kick-Ausschläge</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_mixed_in_key_cues_and_sections.png" alt="Track-Analyse Studio mit CUE Points" width="90%" />
+  <p><em>Studio Analyse: 8 automatische CUE Points mit lückenloser Erkennung musikalischer Formteile</em></p>
+</div>
+
+---
+
+### 7. Vorhörfunktion & Interaktiver Scrubber
+
+Am unteren Bildschirmrand steht dir eine permanente Vorhörleiste zur Verfügung:
+
+- **Maus-verschiebbarer Playhead**: Ziehe den Positionspunkt flüssig mit der Maus über die Wellenform (`Real-time Drag Scrubbing`).
+- **Live Zeit-Tooltip**: Zeigt beim Überfahren die exakte Zielzeit an.
+- **Klickbare Makro-Sektionen**: Klicke auf ein Segment (*Intro, Drop, Outro*), um sofort an dessen Taktanfang zu springen.
+
+<div align="center">
+  <img src="docs/screenshots/screenshot_vorhoer_draggable_scrubber.png" alt="Vorhörfunktion mit verschiebbarem Playhead" width="90%" />
+  <p><em>Vorhörleiste: Flüssiges Scrubbing, Hover-Zeitstempel und direkte Sektions-Sprünge</em></p>
+</div>
+
+---
+
+### 8. Taktgitter- & Phasen-Reparatur Studio
+
+Behebt unsaubere Phasen und Takt-Verschiebungen:
+
+- **Phase Nudge**: Verschiebe die Phase manuell in feinen Schritten (`±10 ms`, `±1/4 Beat` oder `±1 Beat`).
+- **Auto Phase-Lock**: Gleicht die Phase von Deck B vollautomatisch mit Deck A ab.
+- **Akustisches Metronom**: Integrierter Klick-Generator zum hörbaren Abgleich des Taktes.
 
 <div align="center">
   <img src="docs/screenshots/screenshot_beatgrid_repair_modal.png" alt="Taktgitter Reparatur Studio" width="90%" />
-  <p><em>Taktgitter- und Phasen-Reparatur: Phasenkorrektur, Auto-Lock und akustisches Metronom</em></p>
+  <p><em>Taktgitter-Reparatur: Phasenkorrektur, Auto Phase-Lock und akustisches Metronom</em></p>
 </div>
 
 ---
 
-### 7. Globaler DJ-Set Player & Playlist-Verwaltung
-Der fest verankerte DJ-Player am unteren Bildschirmrand bietet volle Live-Kontrolle:
+### 9. Globaler DJ-Set Player & 3-Wege-Export
 
-- **Live `● ON AIR` Status-Symbolik**:
-  - Pulsierender `● ON AIR`-Badge und leuchtender Cover-Rahmen auf dem aktuell aktiven Deck.
-  - Animierter Mini-Equalizer über dem Cover.
-  - Inaktives Deck zeigt übersichtlich `STANDBY`.
-- **Vollständig entzerrte Bedienelemente**:
-  - Alle Buttons (`Play/Pause`, `Deck A Solo`, `Deck B Solo`, `Set Export`, `Playlist Speichern`) und Fader sind mit 16 px Bodenfreiheit vollständig sichtbar und unbeschnitten.
-  - Der Crossfader und die Hoch-, Mitten- und Tiefen-Fader bewegen sich synchron zur Wiedergabeposition und den Übergangskurven.
-- **Persistente Playlisten & M3U-Export**:
-  - Speichere arrangierte Sets in der Playlisten-Verwaltung und exportiere sie als M3U-Dateien für Rekordbox, Traktor oder USB-Sticks für Pioneer CDJs.
+Der feste DJ-Player am unteren Bildschirmrand bietet ständige Kontrolle über dein Set:
+
+- **Live `● ON AIR` Status**: Leuchtender Deck-Rahmen und Equalizer-Animation zeigen sofort, welcher Track gerade live im Master zu hören ist.
+- **Fader & Crossfader**: Bewegen sich synchron zur Wiedergabe und den programmierten Übergangskurven.
+- **3 fokussierte Export-Optionen**:
+  1. 🎚️ **Audio Mix (.mp3)**: Rendert das vollständige DJ-Set inklusive aller Überblendungen als fertige MP3-Master-Audiodatei.
+  2. 🎵 **M3U-Playliste (.m3u8)**: Universelle Playliste für DJ-USB-Sticks, Pioneer CDJs, Mediaplayer und Streaming.
+  3. 📄 **Trackliste (.txt)**: Formatierte Textdatei mit Start-Timestamps `[MM:SS]`, Künstler, Titel, BPM, Tonarten und Dauer.
 
 <div align="center">
-  <img src="docs/screenshots/screenshot_bottom_player_uncut_with_on_air.png" alt="Unbeschnittener DJ Player mit ON AIR Status" width="90%" />
-  <p><em>Globaler DJ-Set Player: Live ON AIR Status, synchrone 3-Band EQ Fader, Crossfader und unbeschnittene Buttons</em></p>
+  <img src="docs/screenshots/screenshot_bottom_player_uncut_with_on_air.png" alt="Globaler DJ Set Player mit ON AIR Status" width="90%" />
+  <p><em>DJ-Set Player: Live ON AIR Status, synchrone 3-Band EQ Fader und Crossfader</em></p>
 </div>
 
 <div align="center">
-  <img src="docs/screenshots/screenshot_djset_export_modal.png" alt="DJ Set M3U Export Modal" width="90%" />
-  <p><em>DJ Set Export: Export von Playlisten und Metadaten als universelle M3U-Datei</em></p>
-</div>
-
-<div align="center">
-  <img src="docs/screenshots/screenshot_playlist_persistence.png" alt="Playlist-Verwaltung und Speicherung" width="90%" />
-  <p><em>Playlist-Verwaltung: Dauerhafte Speicherung und Verwaltung beliebig vieler Sets</em></p>
+  <img src="docs/screenshots/screenshot_djset_export_modal.png" alt="DJ Set Export Modal" width="90%" />
+  <p><em>Set Export Modal: Export als fertiger MP3-Audiomix, M3U-Playliste oder strukturierte Text-Trackliste</em></p>
 </div>
 
 ---
 
 ## 🛠️ Technologie-Stack
+
 - **Frontend**: React 19, TypeScript, Tailwind CSS
-- **Bundler & Server**: Vite 6, Connect / Express Middleware
-- **Audio-Engine**: Web Audio API (BiquadFilterNode, GainNode, AudioBufferSourceNode, AnalyserNode)
-- **Metadaten & ID3**: `jsmediatags`
-- **Lokale Datenbank**: IndexedDB via `idb`
-- **Testing & E2E**: Playwright Test Suite
+- **Bundler & Server**: Vite 6, Node.js Express / Connect Middleware
+- **Audio-Engine**: Web Audio API (OfflineAudioContext, BiquadFilterNode, GainNode, AnalyserNode)
+- **Metadaten-Extraktion**: `jsmediatags`
+- **Lokale Datenbank**: IndexedDB (Browser-intern über `idb`)
+- **Testing**: Vitest & Playwright Test Suite
 
 ---
 
 ## 📄 Lizenz
-MIT License — Frei verwendbar für private und professionelle DJ-Sets.
 
+Dieses Projekt steht unter der **MIT-Lizenz** — frei verwendbar für private und professionelle DJ-Sets.
