@@ -1432,12 +1432,24 @@ export default function TrackAnalysisView({
     const pitchPctStr = `${pitchSlider >= 0 ? '+' : ''}${pitchSlider.toFixed(1)}%`;
     const keyStr = analysisData?.camelotKey || track.key || '8A';
 
-    // Stationary paging window calculation (stands still in current zoom level; playhead moves across)
-    const beatsPerWindow = Math.max(4, Math.round(32 / zoomLevel));
-    const windowDuration = beatsPerWindow * beatIntervalSec;
-    const windowIndex = Math.max(0, Math.floor(currentTime / Math.max(0.1, windowDuration)));
-    const windowStart = windowIndex * windowDuration;
-    const windowEnd = windowStart + windowDuration;
+    // Precision Waveform window calculation:
+    // When zoomLevel === 1 (default), show the entire song from 0:00 to end.
+    // When zoomed in (2x, 4x, 8x), smoothly center a focused window around the current playhead.
+    const isFullSong = zoomLevel <= 1;
+    const totalDuration = Math.max(1, duration || track.duration || 180);
+    let windowStart = 0;
+    let windowDuration = totalDuration;
+    let windowEnd = totalDuration;
+
+    if (!isFullSong) {
+      // Focused window: 32 beats / (zoomLevel / 2) -> 2x: 32 beats, 4x: 16 beats, 8x: 8 beats
+      const beatsPerWindow = Math.max(4, Math.round(32 / (zoomLevel / 2)));
+      windowDuration = Math.min(totalDuration, Math.max(4 * beatIntervalSec, beatsPerWindow * beatIntervalSec));
+      const halfWin = windowDuration / 2;
+      windowStart = Math.max(0, Math.min(totalDuration - windowDuration, currentTime - halfWin));
+      windowEnd = windowStart + windowDuration;
+    }
+
     const playheadPct = Math.max(0, Math.min(100, ((currentTime - windowStart) / Math.max(0.01, windowDuration)) * 100));
 
     // Active cue for bottom editor
@@ -1788,6 +1800,12 @@ export default function TrackAnalysisView({
               const barNum = Math.floor(bIdx / 4) + 1;
               const subIndex = (bIdx % 4) + 1;
 
+              // When showing the full song (1x zoom), only render downbeat lines to maintain a pristine, razor-sharp display
+              if (isFullSong && !isDownbeat) return null;
+
+              // In full-song view, show bar numbers every 4 bars to prevent label collisions
+              const showBarNumber = isDownbeat && (!isFullSong || barNum === 1 || barNum % 4 === 0);
+
               return (
                 <div 
                   key={bIdx}
@@ -1797,9 +1815,13 @@ export default function TrackAnalysisView({
                 >
                   {isDownbeat ? (
                     <div className="h-full flex flex-col items-center">
-                      <div className="px-1.5 py-0.5 rounded bg-black/90 text-white font-mono font-black text-[8px] shadow border border-white/80 z-20">
-                        {barNum}
-                      </div>
+                      {showBarNumber ? (
+                        <div className="px-1.5 py-0.5 rounded bg-black/90 text-white font-mono font-black text-[8px] shadow border border-white/80 z-20">
+                          {barNum}
+                        </div>
+                      ) : (
+                        <div className="w-1.5 h-1.5 rounded-full bg-white/70 shadow-sm z-20 mt-1" />
+                      )}
                       <div className="w-[1.5px] flex-1 bg-gradient-to-b from-white/90 via-cyan-400/80 to-white/40 shadow-[0_0_6px_rgba(255,255,255,0.7)]" />
                     </div>
                   ) : (
@@ -2229,7 +2251,7 @@ export default function TrackAnalysisView({
           <div className="flex items-center gap-1.5">
             <span className="text-gray-500 text-xs font-mono">Zoom:</span>
             <button onClick={() => setZoomLevel(prev => Math.max(1, prev / 2))} className="px-2 py-1 bg-[#1E2330] hover:bg-[#2A3245] rounded text-xs text-white font-mono">-</button>
-            <span className="text-xs font-mono font-bold text-cyan-400 px-1">{zoomLevel}x</span>
+            <span className="text-xs font-mono font-bold text-cyan-400 px-1">{zoomLevel === 1 ? '1x (Full Song)' : `${zoomLevel}x`}</span>
             <button onClick={() => setZoomLevel(prev => Math.min(8, prev * 2))} className="px-2 py-1 bg-[#1E2330] hover:bg-[#2A3245] rounded text-xs text-white font-mono">+</button>
           </div>
 

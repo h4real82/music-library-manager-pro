@@ -52,6 +52,127 @@ interface TransitionOverlapZone {
   keyComp: any;
 }
 
+interface PrecisionTimelineWaveformProps {
+  track: TrackDef;
+  durationSec: number;
+  beatgridOffsetSec: number;
+  beatIntervalSec: number;
+}
+
+const PrecisionTimelineWaveform: React.FC<PrecisionTimelineWaveformProps> = React.memo(({
+  track,
+  durationSec,
+  beatgridOffsetSec,
+  beatIntervalSec,
+}) => {
+  const count = 200;
+  const sliceMetrics = useMemo(() => {
+    const metrics = [];
+    const dur = Math.max(1, durationSec || track.duration || 180);
+    const sliceDur = dur / count;
+    const audioBuf = track.deepAnalysis?.audioBuffer || null;
+
+    for (let i = 0; i < count; i++) {
+      const sliceTime = (i / count) * dur;
+      const m = getTrackWaveformSlice(
+        track,
+        track.deepAnalysis || null,
+        sliceTime,
+        dur,
+        beatgridOffsetSec,
+        beatIntervalSec,
+        audioBuf,
+        sliceDur
+      );
+      metrics.push({
+        x: (i / count) * 1000 + 0.2,
+        ...m
+      });
+    }
+    return metrics;
+  }, [track, durationSec, beatgridOffsetSec, beatIntervalSec]);
+
+  const bodyUpper = sliceMetrics.map(s => `L ${s.x.toFixed(1)} ${(50 - s.bodyAmp * 33).toFixed(1)}`).join(' ');
+  const bodyLower = [...sliceMetrics].reverse().map(s => `L ${s.x.toFixed(1)} ${(50 + s.bodyAmp * 33).toFixed(1)}`).join(' ');
+  const bodyEnvelopePath = `M 0 ${(50 - sliceMetrics[0].bodyAmp * 33).toFixed(1)} ${bodyUpper} L 1000 ${(50 + sliceMetrics[sliceMetrics.length - 1].bodyAmp * 33).toFixed(1)} ${bodyLower} Z`;
+
+  const coreUpper = sliceMetrics.map(s => `L ${s.x.toFixed(1)} ${(50 - s.coreAmp * 18).toFixed(1)}`).join(' ');
+  const coreLower = [...sliceMetrics].reverse().map(s => `L ${s.x.toFixed(1)} ${(50 + s.coreAmp * 18).toFixed(1)}`).join(' ');
+  const coreRibbonPath = `M 0 ${(50 - sliceMetrics[0].coreAmp * 18).toFixed(1)} ${coreUpper} L 1000 ${(50 + sliceMetrics[sliceMetrics.length - 1].coreAmp * 18).toFixed(1)} ${coreLower} Z`;
+
+  const needles = sliceMetrics.map(s => {
+    const h = Math.round(s.needleAmp * 45);
+    return {
+      x: s.x,
+      yTop: 50 - h,
+      height: Math.max(2, h * 2),
+      isKick: s.isKick || s.needleAmp > 0.65
+    };
+  });
+
+  const gradKey = (track.id || 'trk').replace(/[^a-zA-Z0-9]/g, '');
+
+  return (
+    <div 
+      className="w-full h-full relative flex items-center overflow-hidden select-none pointer-events-none"
+      style={{ background: 'linear-gradient(180deg, #020b18 0%, #061836 50%, #030f24 100%)' }}
+    >
+      <svg viewBox="0 0 1000 100" preserveAspectRatio="none" className="w-full h-full">
+        <defs>
+          <linearGradient id={`tl-body-${gradKey}`} x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#0077ff" stopOpacity="0.55" />
+            <stop offset="25%" stopColor="#00aaff" stopOpacity="0.45" />
+            <stop offset="50%" stopColor="#00e5ff" stopOpacity="0.60" />
+            <stop offset="75%" stopColor="#00aaff" stopOpacity="0.45" />
+            <stop offset="100%" stopColor="#0077ff" stopOpacity="0.55" />
+          </linearGradient>
+          <linearGradient id={`tl-core-${gradKey}`} x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#00f5ff" stopOpacity="0.9" />
+            <stop offset="50%" stopColor="#ffffff" stopOpacity="1" />
+            <stop offset="100%" stopColor="#00f5ff" stopOpacity="0.9" />
+          </linearGradient>
+          <linearGradient id={`tl-needle-${gradKey}`} gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="100">
+            <stop offset="0%" stopColor="#00ffff" stopOpacity="1.0" />
+            <stop offset="35%" stopColor="#38bdf8" stopOpacity="0.95" />
+            <stop offset="50%" stopColor="#0284c7" stopOpacity="0.85" />
+            <stop offset="65%" stopColor="#38bdf8" stopOpacity="0.95" />
+            <stop offset="100%" stopColor="#00ffff" stopOpacity="1.0" />
+          </linearGradient>
+          <linearGradient id={`tl-kick-${gradKey}`} gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="100">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="1.0" />
+            <stop offset="20%" stopColor="#f59e0b" stopOpacity="1.0" />
+            <stop offset="50%" stopColor="#ef4444" stopOpacity="0.95" />
+            <stop offset="80%" stopColor="#f59e0b" stopOpacity="1.0" />
+            <stop offset="100%" stopColor="#ffffff" stopOpacity="1.0" />
+          </linearGradient>
+        </defs>
+
+        {/* Center baseline */}
+        <line x1="0" y1="50" x2="1000" y2="50" stroke="#0e223d" strokeWidth="0.8" opacity="0.6" />
+
+        {/* Luminous Body Envelope */}
+        <path d={bodyEnvelopePath} fill={`url(#tl-body-${gradKey})`} stroke="#00d2ff" strokeWidth="0.8" strokeOpacity="0.45" />
+
+        {/* Neon Core Ribbon */}
+        <path d={coreRibbonPath} fill={`url(#tl-core-${gradKey})`} opacity="0.75" />
+
+        {/* Razor-sharp Needles with Kick Peaks */}
+        {needles.map((n, i) => (
+          <rect
+            key={i}
+            x={n.x - 0.7}
+            y={n.yTop}
+            width={1.4}
+            height={n.height}
+            rx={0.7}
+            fill={n.isKick ? `url(#tl-kick-${gradKey})` : `url(#tl-needle-${gradKey})`}
+          />
+        ))}
+      </svg>
+    </div>
+  );
+});
+
 export default function WaveformTimeline({
   tracks,
   transitions,
@@ -86,6 +207,20 @@ export default function WaveformTimeline({
   const [dragStartX, setDragStartX] = useState<number>(0);
   const [activeDragDeltaSec, setActiveDragDeltaSec] = useState<number>(0);
 
+  // Transition Edge Resizing State (Freely resize transition left and right)
+  const [resizingTransition, setResizingTransition] = useState<{
+    id: string;
+    edge: 'left' | 'right';
+    startX: number;
+    initialDurationBeats: number;
+    initialSourceTimeSec: number;
+    bpmA: number;
+    sourceTrackId: string;
+    targetTrackId: string;
+  } | null>(null);
+  const [liveResizedBeats, setLiveResizedBeats] = useState<Record<string, number>>({});
+  const [liveResizedSourceTime, setLiveResizedSourceTime] = useState<Record<string, number>>({});
+
   // Beatgrid Repair Modal State
   const [beatgridRepairModal, setBeatgridRepairModal] = useState<{
     track: TrackDef;
@@ -117,13 +252,15 @@ export default function WaveformTimeline({
           (t.sourceTrackId === prevTrack.id)
         );
 
-        const durationBeats = inTrans?.durationBeats || 32;
+        const inTransKey = inTrans ? inTrans.id : `tr-${prevTrack.id}-${track.id}`;
+        const durationBeats = liveResizedBeats[inTransKey] ?? inTrans?.durationBeats ?? 32;
         const transDurationSec = durationBeats * (60 / prevBpm);
 
         // Transition is firmly anchored to prevTrack's mixout position on the master timeline
-        const prevMixoutSec = inTrans?.sourceTimeSec !== undefined
+        const defaultPrevMixout = Math.max(0, prevLayout.durationSec - transDurationSec);
+        const prevMixoutSec = liveResizedSourceTime[inTransKey] ?? (inTrans?.sourceTimeSec !== undefined
           ? inTrans.sourceTimeSec
-          : Math.max(0, prevLayout.durationSec - transDurationSec);
+          : defaultPrevMixout);
 
         const transFrameStartSec = prevLayout.startSec + prevMixoutSec;
 
@@ -160,7 +297,7 @@ export default function WaveformTimeline({
       });
     }
     return layouts;
-  }, [tracks, transitions, trackOffsets, draggingTrackId, activeDragDeltaSec]);
+  }, [tracks, transitions, trackOffsets, draggingTrackId, activeDragDeltaSec, liveResizedBeats, liveResizedSourceTime]);
 
   // Compute unified transition overlap zones that span ACROSS BOTH LANES
   // The transition frame STAYS ANCHORED to Track A (source track)
@@ -177,26 +314,31 @@ export default function WaveformTimeline({
       const bpmA = trackA.bpm || 130;
 
       const found = transitions.find(t => t.sourceTrackId === layoutA.track.id && t.targetTrackId === layoutB.track.id);
-      const durationBeats = found?.durationBeats || 32;
+      const transKey = found ? found.id : `tr-${layoutA.track.id}-${layoutB.track.id}`;
+      const durationBeats = liveResizedBeats[transKey] ?? found?.durationBeats ?? 32;
       const transDurationSec = durationBeats * (60 / bpmA);
 
       // Anchored strictly to Track A's outro position!
-      const mixoutSec = found?.sourceTimeSec !== undefined
+      const defaultMixout = Math.max(0, layoutA.durationSec - transDurationSec);
+      const mixoutSec = liveResizedSourceTime[transKey] ?? (found?.sourceTimeSec !== undefined
         ? found.sourceTimeSec
-        : Math.max(0, layoutA.durationSec - transDurationSec);
+        : defaultMixout);
 
       const overlapStartSec = layoutA.startSec + mixoutSec;
       const overlapEndSec = overlapStartSec + transDurationSec;
 
-      const trans: TransitionConfig = found || {
-        id: `tr-${layoutA.track.id}-${layoutB.track.id}`,
-        sourceTrackId: layoutA.track.id,
-        targetTrackId: layoutB.track.id,
-        sourceSlotId: 'outro',
-        targetSlotId: 'intro',
+      const trans: TransitionConfig = {
+        ...(found || {
+          id: transKey,
+          sourceTrackId: layoutA.track.id,
+          targetTrackId: layoutB.track.id,
+          sourceSlotId: 'outro',
+          targetSlotId: 'intro',
+          preset: 'bass-swap' as TransitionPresetType,
+        }),
         durationBeats,
-        preset: 'bass-swap' as TransitionPresetType,
-        envelopes: generateDefaultEnvelopes('bass-swap', durationBeats),
+        sourceTimeSec: mixoutSec,
+        envelopes: found?.envelopes && found.durationBeats === durationBeats ? found.envelopes : generateDefaultEnvelopes(found?.preset || 'bass-swap', durationBeats),
       };
 
       const keyComp = evaluateKeyCompatibility(layoutA.track.key, layoutB.track.key);
@@ -216,7 +358,7 @@ export default function WaveformTimeline({
       });
     }
     return zones;
-  }, [trackLayouts, transitions, pxPerSec]);
+  }, [trackLayouts, transitions, pxPerSec, liveResizedBeats, liveResizedSourceTime]);
 
   const totalSetDurationSec = trackLayouts.length > 0 
     ? Math.max(...trackLayouts.map(l => l.endSec), 300) 
@@ -308,6 +450,102 @@ export default function WaveformTimeline({
       window.removeEventListener('pointerup', handlePointerUp);
     };
   }, [draggingTrackId, dragStartX, pxPerSec, trackLayouts]);
+
+  // Transition edge resizing handlers
+  const handleResizePointerDown = (
+    e: React.PointerEvent,
+    trans: TransitionConfig,
+    edge: 'left' | 'right',
+    bpmA: number,
+    sourceDurationSec: number
+  ) => {
+    e.stopPropagation();
+    e.preventDefault();
+    (e.target as Element).setPointerCapture(e.pointerId);
+
+    const initialBeats = trans.durationBeats || 32;
+    const transDurationSec = initialBeats * (60 / bpmA);
+    const initialSourceTimeSec = trans.sourceTimeSec !== undefined ? trans.sourceTimeSec : Math.max(0, sourceDurationSec - transDurationSec);
+
+    setResizingTransition({
+      id: trans.id,
+      edge,
+      startX: e.clientX,
+      initialDurationBeats: initialBeats,
+      initialSourceTimeSec,
+      bpmA,
+      sourceTrackId: trans.sourceTrackId,
+      targetTrackId: trans.targetTrackId,
+    });
+  };
+
+  useEffect(() => {
+    if (!resizingTransition) return;
+
+    const handlePointerMove = (e: PointerEvent) => {
+      const deltaPx = e.clientX - resizingTransition.startX;
+      const deltaSec = deltaPx / pxPerSec;
+      const beatIntervalSec = 60 / resizingTransition.bpmA;
+
+      if (resizingTransition.edge === 'right') {
+        const deltaBeats = Math.round(deltaSec / beatIntervalSec);
+        const newBeats = Math.max(4, Math.min(128, resizingTransition.initialDurationBeats + deltaBeats));
+        setLiveResizedBeats(prev => ({ ...prev, [resizingTransition.id]: newBeats }));
+      } else {
+        // Dragging left edge: dragging leftwards increases duration by starting earlier in Track A
+        const deltaBeats = Math.round(-deltaSec / beatIntervalSec);
+        const newBeats = Math.max(4, Math.min(128, resizingTransition.initialDurationBeats + deltaBeats));
+        const newSourceTimeSec = Math.max(0, resizingTransition.initialSourceTimeSec - (newBeats - resizingTransition.initialDurationBeats) * beatIntervalSec);
+        setLiveResizedBeats(prev => ({ ...prev, [resizingTransition.id]: newBeats }));
+        setLiveResizedSourceTime(prev => ({ ...prev, [resizingTransition.id]: newSourceTimeSec }));
+      }
+    };
+
+    const handlePointerUp = () => {
+      const finalBeats = liveResizedBeats[resizingTransition.id] ?? resizingTransition.initialDurationBeats;
+      const finalSourceTime = liveResizedSourceTime[resizingTransition.id] ?? resizingTransition.initialSourceTimeSec;
+
+      const updatedTransitions = transitions.map(t => {
+        if (t.id === resizingTransition.id || (t.sourceTrackId === resizingTransition.sourceTrackId && t.targetTrackId === resizingTransition.targetTrackId)) {
+          return {
+            ...t,
+            durationBeats: finalBeats,
+            sourceTimeSec: finalSourceTime,
+            envelopes: generateDefaultEnvelopes(t.preset || 'bass-swap', finalBeats),
+          };
+        }
+        return t;
+      });
+
+      const exists = updatedTransitions.some(t => t.id === resizingTransition.id || (t.sourceTrackId === resizingTransition.sourceTrackId && t.targetTrackId === resizingTransition.targetTrackId));
+      if (!exists) {
+        updatedTransitions.push({
+          id: resizingTransition.id,
+          sourceTrackId: resizingTransition.sourceTrackId,
+          targetTrackId: resizingTransition.targetTrackId,
+          sourceSlotId: 'outro',
+          targetSlotId: 'intro',
+          durationBeats: finalBeats,
+          sourceTimeSec: finalSourceTime,
+          preset: 'bass-swap' as TransitionPresetType,
+          envelopes: generateDefaultEnvelopes('bass-swap', finalBeats),
+        });
+      }
+
+      if (onTransitionsChange) {
+        onTransitionsChange(updatedTransitions);
+      }
+
+      setResizingTransition(null);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [resizingTransition, pxPerSec, transitions, liveResizedBeats, liveResizedSourceTime, onTransitionsChange]);
 
   return (
     <div 
@@ -582,40 +820,13 @@ export default function WaveformTimeline({
                       })}
                     </div>
 
-                    {/* Authentic 3-Band Multi-Frequency Waveform Slices */}
-                    <div className="w-full h-full flex items-center px-1">
-                      {Array.from({ length: sliceCount }).map((_, sIdx) => {
-                        const sliceTime = (sIdx / sliceCount) * layout.durationSec;
-                        const relBeatTime = sliceTime - beatgridOffsetSec;
-                        const beatPhase = ((relBeatTime / beatIntervalSec) % 1 + 1) % 1;
-                        const isDownbeat = (Math.floor(relBeatTime / beatIntervalSec) % 4 === 0);
-                        const kickTransient = Math.max(0, 1 - beatPhase * 3.2);
-
-                        // Use precision waveform slice generator with binary segment search
-                        const wfSlice = getTrackWaveformSlice(track, sliceTime);
-                        const lowAmp = Math.min(1.0, Math.max(wfSlice.kickAmp * 1.1, kickTransient * (isDownbeat ? 1.0 : 0.75)));
-                        const midAmp = Math.min(1.0, wfSlice.bodyAmp);
-                        const highAmp = Math.min(1.0, wfSlice.needleAmp);
-
-                        const totalHeightPct = Math.min(96, Math.max(12, (lowAmp * 0.45 + midAmp * 0.35 + highAmp * 0.2) * 100));
-
-                        const isKickSlice = kickTransient > 0.45 || wfSlice.kickAmp > 0.5;
-                        const barColor = isKickSlice
-                          ? 'bg-gradient-to-t from-red-600 via-orange-400 to-amber-300'
-                          : 'bg-gradient-to-t from-cyan-600 via-cyan-400 to-teal-300';
-
-                        return (
-                          <div
-                            key={sIdx}
-                            className={`flex-1 mx-[1px] rounded-sm transition-all ${barColor}`}
-                            style={{ 
-                              height: `${totalHeightPct}%`,
-                              opacity: isKickSlice ? 0.95 : 0.65
-                            }}
-                          />
-                        );
-                      })}
-                    </div>
+                    {/* High-Definition Precision Waveform Engine */}
+                    <PrecisionTimelineWaveform
+                      track={track}
+                      durationSec={layout.durationSec}
+                      beatgridOffsetSec={beatgridOffsetSec}
+                      beatIntervalSec={beatIntervalSec}
+                    />
 
                     {/* Track start/end cue flags */}
                     <div className="absolute top-1 left-2 flex items-center gap-1.5 bg-black/80 px-2 py-0.5 rounded text-[9px] font-mono text-cyan-300 border border-cyan-500/30 backdrop-blur-sm pointer-events-none">
@@ -638,13 +849,14 @@ export default function WaveformTimeline({
               const trans = zone.transition;
               const isTransitionActive = trans.id === activeTransitionId;
               const frameLeftPx = TIMELINE_HEADER_WIDTH + zone.overlapStartPx;
+              const bpmA = zone.sourceLayout.track.bpm || 130;
 
               return (
                 <div
                   key={`unified-frame-${trans.id}-${zIdx}`}
                   data-transition-frame="true"
                   data-transition-id={trans.id}
-                  className={`transition-bounding-frame absolute z-30 rounded-2xl border-2 transition-all cursor-pointer pointer-events-auto backdrop-blur-[1px] flex flex-col justify-between p-3 group/frame ${
+                  className={`transition-bounding-frame absolute z-30 rounded-2xl border-2 transition-all cursor-pointer pointer-events-auto backdrop-blur-[1px] flex flex-col justify-between p-2.5 group/frame relative ${
                     isTransitionActive
                       ? 'border-purple-400 bg-purple-950/25 shadow-[0_0_35px_rgba(168,85,247,0.5)] ring-2 ring-purple-500/50'
                       : 'border-cyan-400/90 bg-cyan-950/20 hover:border-purple-400 hover:bg-purple-950/30 shadow-[0_0_25px_rgba(6,182,212,0.25)]'
@@ -652,8 +864,7 @@ export default function WaveformTimeline({
                   style={{
                     top: `${zone.topPx}px`,
                     left: `${frameLeftPx}px`,
-                    width: `${Math.max(220, zone.overlapWidthPx)}px`,
-                    minWidth: '220px',
+                    width: `${Math.max(140, zone.overlapWidthPx)}px`,
                     height: `${zone.heightPx}px`,
                   }}
                   onClick={() => {
@@ -662,17 +873,61 @@ export default function WaveformTimeline({
                   }}
                   title="Klicken, um diesen Übergang auszuwählen und direkt anzuspringen"
                 >
-                  {/* TOP HEADER: TRANSITION INFO & BUTTONS */}
-                  <div className="flex items-center justify-between z-20 gap-2 flex-wrap pointer-events-auto">
-                    <div className="flex items-center gap-2 bg-black/90 px-2.5 py-1 rounded-lg border border-[#242936] text-[10px] font-mono font-bold text-white shadow-md">
-                      <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-                      <span>ÜBERGANG: {trans.preset.toUpperCase()}</span>
-                      <span className="text-cyan-400 font-black">({trans.durationBeats} Beats • {zone.overlapDurationSec.toFixed(1)}s)</span>
+                  {/* Left Edge Resize Handle (freely adjusts transition start & length) */}
+                  <div
+                    className="absolute left-0 top-0 bottom-0 w-3.5 z-40 cursor-ew-resize hover:bg-cyan-400/30 active:bg-cyan-400/50 flex items-center justify-center group/edge rounded-l-2xl transition-colors"
+                    onPointerDown={(e) => handleResizePointerDown(e, trans, 'left', bpmA, zone.sourceLayout.durationSec)}
+                    title="Linke Kante ziehen: Übergangslänge / Startzeitpunkt frei ändern"
+                  >
+                    <div className="w-1 h-10 rounded-full bg-cyan-400/70 group-hover/edge:bg-cyan-300 group-hover/edge:shadow-[0_0_8px_#22d3ee] transition-all" />
+                  </div>
+
+                  {/* Right Edge Resize Handle (freely adjusts transition length & mixout) */}
+                  <div
+                    className="absolute right-0 top-0 bottom-0 w-3.5 z-40 cursor-ew-resize hover:bg-purple-400/30 active:bg-purple-400/50 flex items-center justify-center group/edge rounded-r-2xl transition-colors"
+                    onPointerDown={(e) => handleResizePointerDown(e, trans, 'right', bpmA, zone.sourceLayout.durationSec)}
+                    title="Rechte Kante ziehen: Übergangslänge frei verlängern oder verkürzen"
+                  >
+                    <div className="w-1 h-10 rounded-full bg-purple-400/70 group-hover/edge:bg-purple-300 group-hover/edge:shadow-[0_0_8px_#c084fc] transition-all" />
+                  </div>
+
+                  {/* TOP HEADER: TRANSITION INFO & QUICK CONTROLS (Contained, no overflow) */}
+                  <div className="flex items-center justify-between z-20 gap-1.5 max-w-full overflow-hidden pointer-events-auto shrink-0 pl-1.5 pr-1.5">
+                    <div className="flex items-center gap-1.5 bg-black/90 px-2 py-0.5 rounded-lg border border-[#242936] text-[9px] font-mono font-bold text-white shadow-md truncate">
+                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse shrink-0" />
+                      <span className="truncate">{trans.preset.toUpperCase()}</span>
+                      <span className="text-cyan-400 font-black shrink-0">
+                        {trans.durationBeats}B ({zone.overlapDurationSec.toFixed(1)}s)
+                      </span>
+
+                      {/* Contained Quick Beat Length Selector (8B, 16B, 32B, 64B) */}
+                      <div className="flex items-center gap-0.5 ml-1 border-l border-[#2F3648] pl-1 shrink-0">
+                        {[8, 16, 32, 64].map((b) => (
+                          <button
+                            key={b}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const updated = transitions.map(t => 
+                                t.id === trans.id ? { ...t, durationBeats: b, envelopes: generateDefaultEnvelopes(t.preset || 'bass-swap', b) } : t
+                              );
+                              if (onTransitionsChange) onTransitionsChange(updated);
+                            }}
+                            className={`px-1 py-0.2 rounded text-[8px] font-mono font-bold transition-all ${
+                              trans.durationBeats === b
+                                ? 'bg-cyan-500 text-white shadow-[0_0_6px_rgba(6,182,212,0.8)]'
+                                : 'bg-[#1E2330] text-gray-400 hover:text-white'
+                            }`}
+                            title={`${b} Beats Übergangslänge wählen`}
+                          >
+                            {b}
+                          </button>
+                        ))}
+                      </div>
                     </div>
 
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1 shrink-0">
                       {zone.keyComp && (
-                        <div className={`px-2 py-0.5 rounded-lg text-[9px] font-mono font-bold border ${
+                        <div className={`px-1.5 py-0.2 rounded text-[8px] font-mono font-bold border truncate hidden sm:block ${
                           zone.keyComp.type === 'perfect' 
                             ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' 
                             : 'bg-purple-500/20 text-purple-300 border-purple-500/40'
@@ -690,11 +945,11 @@ export default function WaveformTimeline({
                           if (onSeek) onSeek(zone.overlapStartSec);
                           if (!isPlaying && onTogglePlay) onTogglePlay();
                         }}
-                        className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-500 text-white px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold shadow-md transition-all hover:scale-105 active:scale-95"
+                        className="flex items-center gap-0.5 bg-emerald-600 hover:bg-emerald-500 text-white px-1.5 py-0.5 rounded text-[9px] font-mono font-bold shadow transition-all hover:scale-105 active:scale-95"
                         title="Übergang sofort anspringen und abspielen"
                       >
-                        <Play className="w-3 h-3 fill-white" />
-                        <span>Cue Mix</span>
+                        <Play className="w-2.5 h-2.5 fill-white" />
+                        <span>Cue</span>
                       </button>
 
                       {/* Quick Beatgrid Repair Button in Overlap Frame */}
@@ -709,7 +964,7 @@ export default function WaveformTimeline({
                         className="p-1 bg-black/80 hover:bg-purple-600 rounded text-gray-300 hover:text-white border border-[#242936] transition-colors"
                         title="Taktgitter beider Tracks abgleichen"
                       >
-                        <Activity className="w-3 h-3 text-cyan-400" />
+                        <Activity className="w-2.5 h-2.5 text-cyan-400" />
                       </button>
 
                       {/* Open Waveform Transition Overlap Studio */}
@@ -719,10 +974,10 @@ export default function WaveformTimeline({
                           e.stopPropagation();
                           onOpenTransitionStudio(trans);
                         }}
-                        className="flex items-center gap-1 bg-purple-600 hover:bg-purple-500 text-white px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold shadow-md transition-all hover:scale-105 active:scale-95"
+                        className="flex items-center gap-0.5 bg-purple-600 hover:bg-purple-500 text-white px-1.5 py-0.5 rounded text-[9px] font-mono font-bold shadow transition-all hover:scale-105 active:scale-95"
                         title="Waveform Transition Overlap Studio öffnen"
                       >
-                        <Sliders className="w-3 h-3 text-cyan-300" />
+                        <Sliders className="w-2.5 h-2.5 text-cyan-300" />
                         <span>Hüllkurven</span>
                       </button>
                     </div>

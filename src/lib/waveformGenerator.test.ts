@@ -21,3 +21,58 @@ describe('findActiveSegment', () => {
     expect(findActiveSegment([], 10)).toBeUndefined();
   });
 });
+
+describe('getTrackWaveformSlice', () => {
+  const dummyTrack: TrackDef = {
+    id: 'test-track-1',
+    title: 'Festival Banger',
+    artist: 'DJ Antigravity',
+    album: 'Peak Time',
+    duration: 180,
+    bpm: 128,
+    key: '11B',
+    path: '/music/track1.mp3',
+    genre: 'Tech House',
+  };
+
+  it('should compute valid waveform slice metrics with 2 arguments (track, sliceTime)', () => {
+    const slice = getTrackWaveformSlice(dummyTrack, 30);
+    expect(slice).toBeDefined();
+    expect(slice.bodyAmp).toBeGreaterThan(0);
+    expect(slice.needleAmp).toBeGreaterThan(0);
+    expect(slice.coreAmp).toBeGreaterThan(0);
+    expect(Number.isNaN(slice.bodyAmp)).toBe(false);
+    expect(Number.isNaN(slice.needleAmp)).toBe(false);
+    expect(typeof slice.isKick).toBe('boolean');
+    expect(typeof slice.isDownbeat).toBe('boolean');
+  });
+
+  it('should compute valid waveform slice metrics with full arguments', () => {
+    const slice = getTrackWaveformSlice(
+      dummyTrack,
+      null,
+      60,
+      180,
+      0.05,
+      60 / 128,
+      null,
+      0.1
+    );
+    expect(slice).toBeDefined();
+    expect(slice.bodyAmp).toBeGreaterThanOrEqual(0.1);
+    expect(slice.needleAmp).toBeGreaterThanOrEqual(0.1);
+    expect(slice.needleAmp).toBeLessThanOrEqual(1.0);
+    expect(Number.isNaN(slice.bodyAmp)).toBe(false);
+  });
+
+  it('should handle zero-duration and missing BPM safely without NaN or infinity', () => {
+    const bareTrack = { id: 'bare' } as TrackDef;
+    const slice = getTrackWaveformSlice(bareTrack, 10);
+    expect(slice).toBeDefined();
+    expect(Number.isNaN(slice.bodyAmp)).toBe(false);
+    expect(Number.isNaN(slice.needleAmp)).toBe(false);
+    expect(Number.isNaN(slice.coreAmp)).toBe(false);
+    expect(Number.isNaN(slice.floorAmp)).toBe(false);
+  });
+});
+

@@ -80,24 +80,53 @@ export interface WaveformSliceMetrics {
  */
 export function getTrackWaveformSlice(
   track: TrackDef,
-  analysisData: DeepAnalysisData | null,
-  sliceTime: number,
-  durationSec: number,
-  gridAnchorSec: number,
-  beatIntervalSec: number,
+  analysisDataOrSliceTime?: DeepAnalysisData | null | number,
+  sliceTimeParam?: number,
+  durationSecParam?: number,
+  gridAnchorSecParam?: number,
+  beatIntervalSecParam?: number,
   audioBuffer?: AudioBuffer | null,
   sliceWindowSec: number = 0.02
 ): WaveformSliceMetrics {
-  const dur = Math.max(1, durationSec || track.duration || 180);
+  let analysisData: DeepAnalysisData | null = null;
+  let sliceTime = 0;
+
+  if (typeof analysisDataOrSliceTime === 'number') {
+    sliceTime = analysisDataOrSliceTime;
+    analysisData = track.deepAnalysis || null;
+  } else {
+    analysisData = analysisDataOrSliceTime || track.deepAnalysis || null;
+    sliceTime = typeof sliceTimeParam === 'number' && !isNaN(sliceTimeParam) ? sliceTimeParam : 0;
+  }
+
+  const trackBpm = track.bpm || 124;
+  const beatIntervalSec = beatIntervalSecParam && beatIntervalSecParam > 0 
+    ? beatIntervalSecParam 
+    : (60 / (trackBpm > 0 ? trackBpm : 124));
+
+  const firstBeatAnchor = (analysisData?.beatGrid?.firstBeatSec !== undefined && !isNaN(analysisData.beatGrid.firstBeatSec))
+    ? analysisData.beatGrid.firstBeatSec
+    : ((track as any).beatGrid?.firstBeatSec !== undefined && !isNaN((track as any).beatGrid.firstBeatSec))
+      ? (track as any).beatGrid.firstBeatSec
+      : ((track as any).firstBeatSec !== undefined && !isNaN((track as any).firstBeatSec))
+        ? (track as any).firstBeatSec
+        : 0.05;
+
+  const gridAnchorSec = gridAnchorSecParam !== undefined && !isNaN(gridAnchorSecParam) 
+    ? gridAnchorSecParam 
+    : firstBeatAnchor;
+
+  const dur = Math.max(1, durationSecParam || track.duration || 180);
   const normTime = Math.max(0, Math.min(1, sliceTime / dur));
+  const effectiveAudioBuffer = audioBuffer || track.deepAnalysis?.audioBuffer || null;
 
   // --- MODE 1: Direct Raw PCM AudioBuffer Sampling (Zero Decimation Loss) ---
   // When AudioBuffer is available in memory, calculate the exact physical peak and RMS
   // in the needle's micro-window (~20ms). This guarantees 100% bit-perfect transient accuracy.
-  if (audioBuffer && audioBuffer.length > 0) {
-    const sr = audioBuffer.sampleRate;
-    const left = audioBuffer.getChannelData(0);
-    const right = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : left;
+  if (effectiveAudioBuffer && effectiveAudioBuffer.length > 0) {
+    const sr = effectiveAudioBuffer.sampleRate;
+    const left = effectiveAudioBuffer.getChannelData(0);
+    const right = effectiveAudioBuffer.numberOfChannels > 1 ? effectiveAudioBuffer.getChannelData(1) : left;
     const startSample = Math.max(0, Math.min(left.length - 1, Math.floor(sliceTime * sr)));
     const endSample = Math.max(startSample + 1, Math.min(left.length, Math.floor((sliceTime + sliceWindowSec) * sr)));
 

@@ -52,6 +52,7 @@ export default function TransitionOverlapStudio({
   } | null>(null);
 
   const canvasRef = useRef<SVGSVGElement>(null);
+  const lastDragEndRef = useRef<number>(0);
 
   // Key and Tempo evaluation
   const keyComp = evaluateKeyCompatibility(sourceTrack?.key, targetTrack?.key);
@@ -70,18 +71,17 @@ export default function TransitionOverlapStudio({
     applyPresetEnvelopes(selectedPreset, newBeats);
   };
 
+  // BPM constants for Deck A and B
+  const bpmA = sourceTrack?.bpm || 130;
+  const bpmB = targetTrack?.bpm || 130;
+
   // Canvas coordinates
   const canvasWidth = 760;
   const canvasHeight = 240;
   const laneHeight = canvasHeight / 2; // 120px for Deck A, 120px for Deck B
 
   const beatToX = (b: number) => {
-    return (b / beats) * canvasWidth;
-  };
-
-  const xToBeat = (x: number) => {
-    const raw = (x / canvasWidth) * beats;
-    return Math.max(0, Math.min(beats, Math.round(raw * 4) / 4)); // snap to 1/4 beat
+    return (b / Math.max(1, beats)) * canvasWidth;
   };
 
   // Convert value (0..1) to Y within a lane
@@ -91,14 +91,14 @@ export default function TransitionOverlapStudio({
     return top + (1 - val) * height;
   };
 
-  const yToVal = (y: number, laneIndex: 0 | 1) => {
+  const yToVal = (svgY: number, laneIndex: 0 | 1) => {
     const top = laneIndex * laneHeight + 10;
     const height = laneHeight - 20;
-    const norm = 1 - (y - top) / height;
+    const norm = 1 - (svgY - top) / height;
     return Math.max(0, Math.min(1, Math.round(norm * 100) / 100));
   };
 
-  // --- Point Dragging Handlers ---
+  // --- Point Dragging Handlers with Window-Level Event Tracking & Sub-Pixel Precision ---
   const handlePointerDownPoint = (
     e: React.PointerEvent,
     deck: 'A' | 'B',
@@ -106,63 +106,208 @@ export default function TransitionOverlapStudio({
     pointId: string
   ) => {
     e.stopPropagation();
-    (e.target as Element).setPointerCapture(e.pointerId);
+    e.preventDefault();
     setDraggingPoint({ deck, type, pointId });
   };
 
-  const handlePointerMoveCanvas = (e: React.PointerEvent) => {
-    if (!draggingPoint || !canvasRef.current) return;
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+  // Global window pointer listener ensures dragging never drops even on fast cursor flick
+  useEffect(() => {
+    if (!draggingPoint) return;
 
-    const newBeat = xToBeat(x);
-    const laneIndex = draggingPoint.deck === 'A' ? 0 : 1;
-    const newVal = yToVal(y, laneIndex);
+    const handleWindowPointerMove = (e: PointerEvent) => {
+      if (!canvasRef.current) return;
+      const rect = canvasRef.current.getBoundingClientRect();
+      const normX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const normY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+      const svgY = normY * canvasHeight;
 
-    setEnvelopes(prev => {
-      const key = `${draggingPoint.type}${draggingPoint.deck}` as keyof TransitionEnvelopes;
-      const list = [...prev[key]];
-      const targetIdx = list.findIndex(p => p.id === draggingPoint.pointId);
-      if (targetIdx === -1) return prev;
+      // Snap to 1/4 beat by default, or smooth 0.01 precision if Shift is held
+      const rawBeat = normX * beats;
+      const newBeat = e.shiftKey
+        ? Math.max(0, Math.min(beats, Math.round(rawBeat * 100) / 100))
+        : Math.max(0, Math.min(beats, Math.round(rawBeat * 4) / 4));
+      const laneIndex = draggingPoint.deck === 'A' ? 0 : 1;
+      const newVal = yToVal(svgY, laneIndex);
 
-      // First and last points cannot move beat
-      const isFirst = targetIdx === 0;
-      const isLast = targetIdx === list.length - 1;
+      setEnvelopes(prev => {
+        const key = `${draggingPoint.type}${draggingPoint.deck}` as keyof TransitionEnvelopes;
+        const list = [...prev[key]];
+        const targetIdx = list.findIndex(p => p.id === draggingPoint.pointId);
+        if (targetIdx === -1) return prev;
 
-      list[targetIdx] = {
-        ...list[targetIdx],
-        beat: isFirst ? 0 : isLast ? beats : newBeat,
-        value: newVal,
-      };
+        const isFirst = targetIdx === 0;
+        const isLast = targetIdx === list.length - 1;
 
-      // Keep sorted by beat
-      list.sort((a, b) => a.beat - b.beat);
+        // Clamp intermediate points strictly between previous and next points to prevent point flipping / jitter
+        let clampedBeat = newBeat;
+        if (isFirst) {
+          clampedBeat = 0;
+        } else if (isLast) {
+          clampedBeat = beats;
+        } else {
+          const minB = (list[targetIdx - 1]?.beat ?? 0) + 0.1;
+          const maxB = (list[targetIdx + 1]?.beat ?? beats) - 0.1;
+          if (minB <= maxB) {
+            clampedBeat = Math.max(minB, Math.min(maxB, newBeat));
+          }
+        }
 
+        list[targetIdx] = {
+          ...list[targetIdx],
+          beat: clampedBeat,
+          value: newVal,
+        };
+
+        return {
+          ...prev,
+          [key]: list,
+        };
+      });
+    };
+
+    const handleWindowPointerUp = () => {
+      lastDragEndRef.current = Date.now();
+      setDraggingPoint(null);
+    };
+
+    window.addEventListener('pointermove', handleWindowPointerMove);
+    window.addEventListener('pointerup', handleWindowPointerUp);
+    return () => {
+      window.removeEventListener('pointermove', handleWindowPointerMove);
+      window.removeEventListener('pointerup', handleWindowPointerUp);
+    };
+  }, [draggingPoint, beats, canvasWidth, canvasHeight, laneHeight]);
+
+  // High-Resolution Aligned Waveform Slices for Deck A (Mix-out section)
+  const wfSlicesA = useMemo(() => {
+    if (!sourceTrack) return [];
+    const count = 160;
+    const durSec = beats * (60 / bpmA);
+    const baseTime = transition.sourceTimeSec !== undefined
+      ? transition.sourceTimeSec
+      : Math.max(0, (sourceTrack.duration || 180) - durSec);
+    const audioBuf = sourceTrack.deepAnalysis?.audioBuffer || null;
+    const sliceDur = durSec / count;
+
+    const list = [];
+    for (let i = 0; i < count; i++) {
+      const sliceTime = baseTime + (i / count) * durSec;
+      const m = getTrackWaveformSlice(
+        sourceTrack,
+        sourceTrack.deepAnalysis || null,
+        sliceTime,
+        sourceTrack.duration || 180,
+        (sourceTrack as any).firstBeatSec || (sourceTrack.deepAnalysis?.beatGrid?.firstBeatSec ?? 0.05),
+        60 / bpmA,
+        audioBuf,
+        sliceDur
+      );
+      list.push({
+        x: (i / count) * canvasWidth,
+        ...m
+      });
+    }
+    return list;
+  }, [sourceTrack, beats, bpmA, transition.sourceTimeSec, canvasWidth]);
+
+  // High-Resolution Aligned Waveform Slices for Deck B (Mix-in section)
+  const wfSlicesB = useMemo(() => {
+    if (!targetTrack) return [];
+    const count = 160;
+    const durSec = beats * (60 / bpmB);
+    const baseTime = transition.targetTimeSec !== undefined ? transition.targetTimeSec : 0;
+    const audioBuf = targetTrack.deepAnalysis?.audioBuffer || null;
+    const sliceDur = durSec / count;
+
+    const list = [];
+    for (let i = 0; i < count; i++) {
+      const sliceTime = baseTime + (i / count) * durSec;
+      const m = getTrackWaveformSlice(
+        targetTrack,
+        targetTrack.deepAnalysis || null,
+        sliceTime,
+        targetTrack.duration || 180,
+        (targetTrack as any).firstBeatSec || (targetTrack.deepAnalysis?.beatGrid?.firstBeatSec ?? 0.05),
+        60 / bpmB,
+        audioBuf,
+        sliceDur
+      );
+      list.push({
+        x: (i / count) * canvasWidth,
+        ...m
+      });
+    }
+    return list;
+  }, [targetTrack, beats, bpmB, transition.targetTimeSec, canvasWidth]);
+
+  // Precision Multi-Layer Waveform Paths for Deck A (Mix-out)
+  const deckAPrecisionPaths = useMemo(() => {
+    if (!wfSlicesA || wfSlicesA.length === 0) return null;
+    const centerY = laneHeight / 2; // 60
+    const maxBodyAmp = 46;
+    const maxCoreAmp = 22;
+
+    const bodyUpper = wfSlicesA.map(s => `L ${s.x.toFixed(1)} ${(centerY - s.bodyAmp * maxBodyAmp).toFixed(1)}`).join(' ');
+    const bodyLower = [...wfSlicesA].reverse().map(s => `L ${s.x.toFixed(1)} ${(centerY + s.bodyAmp * maxBodyAmp).toFixed(1)}`).join(' ');
+    const bodyEnvelope = `M 0 ${(centerY - wfSlicesA[0].bodyAmp * maxBodyAmp).toFixed(1)} ${bodyUpper} L ${canvasWidth} ${(centerY + wfSlicesA[wfSlicesA.length - 1].bodyAmp * maxBodyAmp).toFixed(1)} ${bodyLower} Z`;
+
+    const coreUpper = wfSlicesA.map(s => `L ${s.x.toFixed(1)} ${(centerY - s.coreAmp * maxCoreAmp).toFixed(1)}`).join(' ');
+    const coreLower = [...wfSlicesA].reverse().map(s => `L ${s.x.toFixed(1)} ${(centerY + s.coreAmp * maxCoreAmp).toFixed(1)}`).join(' ');
+    const coreRibbon = `M 0 ${(centerY - wfSlicesA[0].coreAmp * maxCoreAmp).toFixed(1)} ${coreUpper} L ${canvasWidth} ${(centerY + wfSlicesA[wfSlicesA.length - 1].coreAmp * maxCoreAmp).toFixed(1)} ${coreLower} Z`;
+
+    const needles = wfSlicesA.map(s => {
+      const h = Math.max(1, Math.round(s.needleAmp * 50));
       return {
-        ...prev,
-        [key]: list,
+        x: s.x,
+        yTop: centerY - h,
+        height: Math.max(2, h * 2),
+        isKick: s.isKick || (s.kickAmp !== undefined && s.kickAmp > 0.45),
       };
     });
-  };
 
-  const handlePointerUpCanvas = (e: React.PointerEvent) => {
-    if (draggingPoint) {
-      setDraggingPoint(null);
-    }
-  };
+    return { bodyEnvelope, coreRibbon, needles };
+  }, [wfSlicesA, laneHeight, canvasWidth]);
+
+  // Precision Multi-Layer Waveform Paths for Deck B (Mix-in)
+  const deckBPrecisionPaths = useMemo(() => {
+    if (!wfSlicesB || wfSlicesB.length === 0) return null;
+    const centerY = laneHeight + laneHeight / 2; // 180
+    const maxBodyAmp = 46;
+    const maxCoreAmp = 22;
+
+    const bodyUpper = wfSlicesB.map(s => `L ${s.x.toFixed(1)} ${(centerY - s.bodyAmp * maxBodyAmp).toFixed(1)}`).join(' ');
+    const bodyLower = [...wfSlicesB].reverse().map(s => `L ${s.x.toFixed(1)} ${(centerY + s.bodyAmp * maxBodyAmp).toFixed(1)}`).join(' ');
+    const bodyEnvelope = `M 0 ${(centerY - wfSlicesB[0].bodyAmp * maxBodyAmp).toFixed(1)} ${bodyUpper} L ${canvasWidth} ${(centerY + wfSlicesB[wfSlicesB.length - 1].bodyAmp * maxBodyAmp).toFixed(1)} ${bodyLower} Z`;
+
+    const coreUpper = wfSlicesB.map(s => `L ${s.x.toFixed(1)} ${(centerY - s.coreAmp * maxCoreAmp).toFixed(1)}`).join(' ');
+    const coreLower = [...wfSlicesB].reverse().map(s => `L ${s.x.toFixed(1)} ${(centerY + s.coreAmp * maxCoreAmp).toFixed(1)}`).join(' ');
+    const coreRibbon = `M 0 ${(centerY - wfSlicesB[0].coreAmp * maxCoreAmp).toFixed(1)} ${coreUpper} L ${canvasWidth} ${(centerY + wfSlicesB[wfSlicesB.length - 1].coreAmp * maxCoreAmp).toFixed(1)} ${coreLower} Z`;
+
+    const needles = wfSlicesB.map(s => {
+      const h = Math.max(1, Math.round(s.needleAmp * 50));
+      return {
+        x: s.x,
+        yTop: centerY - h,
+        height: Math.max(2, h * 2),
+        isKick: s.isKick || (s.kickAmp !== undefined && s.kickAmp > 0.45),
+      };
+    });
+
+    return { bodyEnvelope, coreRibbon, needles };
+  }, [wfSlicesB, laneHeight, canvasWidth]);
 
   // Add new control point on click
   const handleCanvasClick = (e: React.MouseEvent) => {
-    if (draggingPoint || !canvasRef.current) return;
+    if (draggingPoint || !canvasRef.current || Date.now() - lastDragEndRef.current < 200) return;
     const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const normX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const normY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    const svgY = normY * canvasHeight;
 
-    const laneIndex = y < laneHeight ? 0 : 1;
+    const laneIndex = svgY < laneHeight ? 0 : 1;
     const deck: 'A' | 'B' = laneIndex === 0 ? 'A' : 'B';
-    const clickBeat = xToBeat(x);
-    const clickVal = yToVal(y, laneIndex as 0 | 1);
+    const clickBeat = Math.max(0, Math.min(beats, Math.round((normX * beats) * 4) / 4));
+    const clickVal = yToVal(svgY, laneIndex as 0 | 1);
 
     const type: 'low' | 'mid' | 'high' | 'volume' = activeLayer === 'all' ? 'low' : activeLayer;
     const key = `${type}${deck}` as keyof TransitionEnvelopes;
@@ -304,6 +449,71 @@ export default function TransitionOverlapStudio({
     );
   };
 
+  // SVG Control Points helper with enlarged 28px tactile grab halo and transform-origin stabilization
+  const renderControlPoints = (
+    points: EnvelopePoint[],
+    deck: 'A' | 'B',
+    type: 'low' | 'mid' | 'high',
+    laneIndex: 0 | 1,
+    color: string,
+    isDiamond: boolean = false
+  ) => {
+    return points.map(pt => {
+      const cx = beatToX(pt.beat);
+      const cy = valToY(pt.value, laneIndex);
+      const isBeingDragged = draggingPoint?.pointId === pt.id;
+
+      return (
+        <g
+          key={pt.id}
+          className="cursor-grab active:cursor-grabbing group/pt select-none"
+          onPointerDown={(e) => handlePointerDownPoint(e, deck, type, pt.id)}
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => handleDeletePoint(e, deck, type, pt.id)}
+          title={`Beat: ${pt.beat.toFixed(2)} | Pegel: ${(pt.value * 100).toFixed(0)}% (Ziehen zum Verschieben, Shift+Ziehen für stufenlos, Rechtsklick zum Löschen)`}
+        >
+          {/* Invisible enlarged hit target (28px diameter) for effortless tactile grabbing */}
+          <circle cx={cx} cy={cy} r="14" fill="transparent" />
+
+          {/* Hover / Active Drag Glow Halo */}
+          <circle
+            cx={cx}
+            cy={cy}
+            r={isBeingDragged ? "9" : "7"}
+            fill="none"
+            stroke={color}
+            strokeWidth={isBeingDragged ? "2.5" : "1.5"}
+            opacity={isBeingDragged ? "0.9" : "0"}
+            className="group-hover/pt:opacity-80 transition-all duration-150"
+          />
+
+          {/* Graphic Symbol: Diamond for Low/Bass, Circle for Mid/High */}
+          {isDiamond ? (
+            <polygon
+              points={`${cx},${cy - 5.5} ${cx + 5.5},${cy} ${cx},${cy + 5.5} ${cx - 5.5},${cy}`}
+              fill={color}
+              stroke="#FFFFFF"
+              strokeWidth="1.5"
+              className={`transition-transform duration-100 ${isBeingDragged ? 'scale-125' : 'group-hover/pt:scale-110'}`}
+              style={{ transformOrigin: `${cx}px ${cy}px` }}
+            />
+          ) : (
+            <circle
+              cx={cx}
+              cy={cy}
+              r={isBeingDragged ? "5.5" : "4.5"}
+              fill={color}
+              stroke="#FFFFFF"
+              strokeWidth="1.5"
+              className={`transition-all duration-100 ${isBeingDragged ? 'scale-125' : 'group-hover/pt:scale-110'}`}
+              style={{ transformOrigin: `${cx}px ${cy}px` }}
+            />
+          )}
+        </g>
+      );
+    });
+  };
+
   const handleSaveAll = () => {
     const updated: TransitionConfig = {
       ...transition,
@@ -326,7 +536,7 @@ export default function TransitionOverlapStudio({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 select-none">
-      <div className="w-full max-w-4xl bg-[#12141A] border border-[#2E3445] rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh]">
+      <div className="w-full max-w-5xl bg-[#12141A] border border-[#2E3445] rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh]">
         
         {/* ================= MODAL HEADER: DJ MIXER INTEL ================= */}
         <div className="p-4 border-b border-[#242936] bg-[#0A0C10] flex items-center justify-between">
@@ -388,10 +598,8 @@ export default function TransitionOverlapStudio({
             {/* Tempo Sync Pill */}
             <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#0D0E12] border border-[#242936] text-gray-300 text-[11px]">
               <Gauge className="w-3.5 h-3.5 text-cyan-400" />
-              <span>SYNC: {tempoSync.recommendedTargetBpm} BPM</span>
-              <span className="text-[10px] text-gray-500 font-normal">
-                ({tempoSync.pitchShift >= 0 ? `+${tempoSync.pitchShift}` : tempoSync.pitchShift}%)
-              </span>
+              <span>{sourceTrack?.bpm || 130} ➔ {tempoSync.recommendedTargetBpm} BPM</span>
+              <span className="text-[9px] text-gray-500 font-mono">({tempoSync.pitchShift >= 0 ? '+' : ''}{tempoSync.pitchShift}%)</span>
             </div>
           </div>
 
@@ -405,8 +613,8 @@ export default function TransitionOverlapStudio({
 
         </div>
 
-        {/* ================= CONTROLS & PRESET BUTTONS ================= */}
-        <div className="px-6 py-3 bg-[#0D0E12] border-b border-[#242936] flex items-center justify-between gap-4">
+        {/* ================= CONTROLS & PRESET BUTTONS (Wrapped & Contained) ================= */}
+        <div className="px-6 py-3 bg-[#0D0E12] border-b border-[#242936] flex items-center justify-between gap-3 flex-wrap">
           {/* Preset Buttons */}
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] font-mono uppercase text-gray-500 mr-1">PRESET:</span>
@@ -530,76 +738,76 @@ export default function TransitionOverlapStudio({
               viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
               className="w-full h-[240px] cursor-crosshair select-none"
               onClick={handleCanvasClick}
-              onPointerMove={handlePointerMoveCanvas}
-              onPointerUp={handlePointerUpCanvas}
             >
               <defs>
-                {/* Waveform Slices Patterns */}
-                <linearGradient id="waveDeckA" x1="0%" y1="0%" x2="0%" y2="100%">
-                  <stop offset="0%" stopColor="#06B6D4" stopOpacity="0.25" />
-                  <stop offset="100%" stopColor="#06B6D4" stopOpacity="0.05" />
+                {/* Precision Waveform Slices Patterns for Deck A */}
+                <linearGradient id="studioWaveDeckA" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stopColor="#0077ff" stopOpacity="0.40" />
+                  <stop offset="50%" stopColor="#06b6d4" stopOpacity="0.55" />
+                  <stop offset="100%" stopColor="#0077ff" stopOpacity="0.40" />
                 </linearGradient>
-                <linearGradient id="waveDeckB" x1="0%" y1="0%" x2="0%" y2="100%">
-                  <stop offset="0%" stopColor="#10B981" stopOpacity="0.25" />
-                  <stop offset="100%" stopColor="#10B981" stopOpacity="0.05" />
+                <linearGradient id="studioCoreA" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.75" />
+                  <stop offset="50%" stopColor="#cffafe" stopOpacity="0.95" />
+                  <stop offset="100%" stopColor="#22d3ee" stopOpacity="0.75" />
+                </linearGradient>
+
+                {/* Precision Waveform Slices Patterns for Deck B */}
+                <linearGradient id="studioWaveDeckB" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stopColor="#059669" stopOpacity="0.40" />
+                  <stop offset="50%" stopColor="#10b981" stopOpacity="0.55" />
+                  <stop offset="100%" stopColor="#059669" stopOpacity="0.40" />
+                </linearGradient>
+                <linearGradient id="studioCoreB" x1="0%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stopColor="#34d399" stopOpacity="0.75" />
+                  <stop offset="50%" stopColor="#d1fae5" stopOpacity="0.95" />
+                  <stop offset="100%" stopColor="#34d399" stopOpacity="0.75" />
                 </linearGradient>
               </defs>
 
-              {/* Background Waveform Representation for Lane A (Real Audio Slices & Transients) */}
-              <g opacity="0.45">
-                {Array.from({ length: 120 }).map((_, idx) => {
-                  const x = (idx / 120) * canvasWidth;
-                  const transDurationSec = beats * (60 / bpmA);
-                  const baseTimeA = transition.sourceTimeSec !== undefined
-                    ? transition.sourceTimeSec
-                    : Math.max(0, (sourceTrack?.duration || 180) - transDurationSec);
-                  const sliceTimeA = baseTimeA + (idx / 120) * transDurationSec;
-                  const sliceA = sourceTrack ? getTrackWaveformSlice(sourceTrack, sliceTimeA) : null;
-                  const h = sliceA
-                    ? Math.max(6, sliceA.bodyAmp * 50 + sliceA.needleAmp * 26)
-                    : Math.abs(Math.sin(idx * 0.35)) * 45 + 10;
-                  const fill = sliceA && sliceA.kickAmp > 0.45 ? '#F43F5E' : '#06B6D4';
-
-                  return (
+              {/* Background Precision Waveform Representation for Lane A (Mix-out Audio Slices & Transients) */}
+              {deckAPrecisionPaths && (
+                <g className="pointer-events-none select-none">
+                  {/* Body Envelope */}
+                  <path d={deckAPrecisionPaths.bodyEnvelope} fill="url(#studioWaveDeckA)" />
+                  {/* Core Ribbon */}
+                  <path d={deckAPrecisionPaths.coreRibbon} fill="url(#studioCoreA)" />
+                  {/* Transient Needles & Kicks */}
+                  {deckAPrecisionPaths.needles.map((needle, i) => (
                     <rect
-                      key={`wa-${idx}`}
-                      x={x}
-                      y={laneHeight / 2 - h / 2}
-                      width={Math.max(1, canvasWidth / 120 - 1)}
-                      height={h}
-                      fill={fill}
-                      rx="1"
+                      key={`a-ndl-${i}`}
+                      x={needle.x - 0.75}
+                      y={needle.yTop}
+                      width={1.5}
+                      height={needle.height}
+                      fill={needle.isKick ? '#f43f5e' : '#06b6d4'}
+                      opacity={needle.isKick ? 0.95 : 0.65}
                     />
-                  );
-                })}
-              </g>
+                  ))}
+                </g>
+              )}
 
-              {/* Background Waveform Representation for Lane B (Real Audio Slices & Transients) */}
-              <g opacity="0.45">
-                {Array.from({ length: 120 }).map((_, idx) => {
-                  const x = (idx / 120) * canvasWidth;
-                  const transDurationSec = beats * (60 / bpmA);
-                  const baseTimeB = transition.targetTimeSec !== undefined ? transition.targetTimeSec : 0;
-                  const sliceTimeB = baseTimeB + (idx / 120) * transDurationSec;
-                  const sliceB = targetTrack ? getTrackWaveformSlice(targetTrack, sliceTimeB) : null;
-                  const h = sliceB
-                    ? Math.max(6, sliceB.bodyAmp * 50 + sliceB.needleAmp * 26)
-                    : Math.abs(Math.cos(idx * 0.4)) * 45 + 10;
-                  const fill = sliceB && sliceB.kickAmp > 0.45 ? '#F59E0B' : '#10B981';
-
-                  return (
+              {/* Background Precision Waveform Representation for Lane B (Mix-in Audio Slices & Transients) */}
+              {deckBPrecisionPaths && (
+                <g className="pointer-events-none select-none">
+                  {/* Body Envelope */}
+                  <path d={deckBPrecisionPaths.bodyEnvelope} fill="url(#studioWaveDeckB)" />
+                  {/* Core Ribbon */}
+                  <path d={deckBPrecisionPaths.coreRibbon} fill="url(#studioCoreB)" />
+                  {/* Transient Needles & Kicks */}
+                  {deckBPrecisionPaths.needles.map((needle, i) => (
                     <rect
-                      key={`wb-${idx}`}
-                      x={x}
-                      y={laneHeight + laneHeight / 2 - h / 2}
-                      width={Math.max(1, canvasWidth / 120 - 1)}
-                      height={h}
-                      fill={fill}
-                      rx="1"
+                      key={`b-ndl-${i}`}
+                      x={needle.x - 0.75}
+                      y={needle.yTop}
+                      width={1.5}
+                      height={needle.height}
+                      fill={needle.isKick ? '#f59e0b' : '#10b981'}
+                      opacity={needle.isKick ? 0.95 : 0.65}
                     />
-                  );
-                })}
-              </g>
+                  ))}
+                </g>
+              )}
 
               {/* Vertical Beat Grid Lines */}
               {Array.from({ length: beats + 1 }).map((_, bIdx) => {
@@ -625,58 +833,21 @@ export default function TransitionOverlapStudio({
               {(activeLayer === 'all' || activeLayer === 'low') && (
                 <>
                   {renderEnvelopePath(envelopes.lowA, 0, '#F97316')}
-                  {envelopes.lowA.map(pt => (
-                    <polygon
-                      key={pt.id}
-                      points={`${beatToX(pt.beat)},${valToY(pt.value, 0) - 5} ${beatToX(pt.beat) + 5},${valToY(pt.value, 0)} ${beatToX(pt.beat)},${valToY(pt.value, 0) + 5} ${beatToX(pt.beat) - 5},${valToY(pt.value, 0)}`}
-                      fill="#F97316"
-                      stroke="#FFFFFF"
-                      strokeWidth="1.5"
-                      className="cursor-pointer hover:scale-125 transition-transform"
-                      onPointerDown={(e) => handlePointerDownPoint(e, 'A', 'low', pt.id)}
-                      onContextMenu={(e) => handleDeletePoint(e, 'A', 'low', pt.id)}
-                    />
-                  ))}
+                  {renderControlPoints(envelopes.lowA, 'A', 'low', 0, '#F97316', true)}
                 </>
               )}
 
               {(activeLayer === 'all' || activeLayer === 'mid') && (
                 <>
                   {renderEnvelopePath(envelopes.midA, 0, '#EAB308')}
-                  {envelopes.midA.map(pt => (
-                    <circle
-                      key={pt.id}
-                      cx={beatToX(pt.beat)}
-                      cy={valToY(pt.value, 0)}
-                      r="4.5"
-                      fill="#EAB308"
-                      stroke="#FFFFFF"
-                      strokeWidth="1.5"
-                      className="cursor-pointer hover:scale-125 transition-transform"
-                      onPointerDown={(e) => handlePointerDownPoint(e, 'A', 'mid', pt.id)}
-                      onContextMenu={(e) => handleDeletePoint(e, 'A', 'mid', pt.id)}
-                    />
-                  ))}
+                  {renderControlPoints(envelopes.midA, 'A', 'mid', 0, '#EAB308', false)}
                 </>
               )}
 
               {(activeLayer === 'all' || activeLayer === 'high') && (
                 <>
                   {renderEnvelopePath(envelopes.highA, 0, '#06B6D4')}
-                  {envelopes.highA.map(pt => (
-                    <circle
-                      key={pt.id}
-                      cx={beatToX(pt.beat)}
-                      cy={valToY(pt.value, 0)}
-                      r="4.5"
-                      fill="#06B6D4"
-                      stroke="#FFFFFF"
-                      strokeWidth="1.5"
-                      className="cursor-pointer hover:scale-125 transition-transform"
-                      onPointerDown={(e) => handlePointerDownPoint(e, 'A', 'high', pt.id)}
-                      onContextMenu={(e) => handleDeletePoint(e, 'A', 'high', pt.id)}
-                    />
-                  ))}
+                  {renderControlPoints(envelopes.highA, 'A', 'high', 0, '#06B6D4', false)}
                 </>
               )}
 
@@ -684,58 +855,21 @@ export default function TransitionOverlapStudio({
               {(activeLayer === 'all' || activeLayer === 'low') && (
                 <>
                   {renderEnvelopePath(envelopes.lowB, 1, '#F97316')}
-                  {envelopes.lowB.map(pt => (
-                    <polygon
-                      key={pt.id}
-                      points={`${beatToX(pt.beat)},${valToY(pt.value, 1) - 5} ${beatToX(pt.beat) + 5},${valToY(pt.value, 1)} ${beatToX(pt.beat)},${valToY(pt.value, 1) + 5} ${beatToX(pt.beat) - 5},${valToY(pt.value, 1)}`}
-                      fill="#F97316"
-                      stroke="#FFFFFF"
-                      strokeWidth="1.5"
-                      className="cursor-pointer hover:scale-125 transition-transform"
-                      onPointerDown={(e) => handlePointerDownPoint(e, 'B', 'low', pt.id)}
-                      onContextMenu={(e) => handleDeletePoint(e, 'B', 'low', pt.id)}
-                    />
-                  ))}
+                  {renderControlPoints(envelopes.lowB, 'B', 'low', 1, '#F97316', true)}
                 </>
               )}
 
               {(activeLayer === 'all' || activeLayer === 'mid') && (
                 <>
                   {renderEnvelopePath(envelopes.midB, 1, '#EAB308')}
-                  {envelopes.midB.map(pt => (
-                    <circle
-                      key={pt.id}
-                      cx={beatToX(pt.beat)}
-                      cy={valToY(pt.value, 1)}
-                      r="4.5"
-                      fill="#EAB308"
-                      stroke="#FFFFFF"
-                      strokeWidth="1.5"
-                      className="cursor-pointer hover:scale-125 transition-transform"
-                      onPointerDown={(e) => handlePointerDownPoint(e, 'B', 'mid', pt.id)}
-                      onContextMenu={(e) => handleDeletePoint(e, 'B', 'mid', pt.id)}
-                    />
-                  ))}
+                  {renderControlPoints(envelopes.midB, 'B', 'mid', 1, '#EAB308', false)}
                 </>
               )}
 
               {(activeLayer === 'all' || activeLayer === 'high') && (
                 <>
                   {renderEnvelopePath(envelopes.highB, 1, '#06B6D4')}
-                  {envelopes.highB.map(pt => (
-                    <circle
-                      key={pt.id}
-                      cx={beatToX(pt.beat)}
-                      cy={valToY(pt.value, 1)}
-                      r="4.5"
-                      fill="#06B6D4"
-                      stroke="#FFFFFF"
-                      strokeWidth="1.5"
-                      className="cursor-pointer hover:scale-125 transition-transform"
-                      onPointerDown={(e) => handlePointerDownPoint(e, 'B', 'high', pt.id)}
-                      onContextMenu={(e) => handleDeletePoint(e, 'B', 'high', pt.id)}
-                    />
-                  ))}
+                  {renderControlPoints(envelopes.highB, 'B', 'high', 1, '#06B6D4', false)}
                 </>
               )}
 
