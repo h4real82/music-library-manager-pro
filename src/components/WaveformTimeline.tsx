@@ -6,6 +6,7 @@ import { PRESET_META } from './DjSetPlayer';
 import { globalPerformanceEngine } from '../lib/performanceEngine';
 import { getTrackWaveformSlice } from '../lib/waveformGenerator';
 import BeatgridRepairModal from './BeatgridRepairModal';
+import ContextMenu, { ContextMenuItemOrDivider } from './ContextMenu';
 
 interface WaveformTimelineProps {
   tracks: TrackDef[];
@@ -221,6 +222,28 @@ export default function WaveformTimeline({
   const [liveResizedBeats, setLiveResizedBeats] = useState<Record<string, number>>({});
   const [liveResizedSourceTime, setLiveResizedSourceTime] = useState<Record<string, number>>({});
 
+  // Transition Dragging & Moving State (Freely move transition window along timeline)
+  const [draggingTransition, setDraggingTransition] = useState<{
+    transId: string;
+    startX: number;
+    initialSourceTimeSec: number;
+    bpmA: number;
+    bpmB: number;
+    trackAId: string;
+    trackBId: string;
+    durationSecA: number;
+    transDurationSec: number;
+  } | null>(null);
+
+  // Timeline Context Menu State
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    title: string;
+    subtitle?: string;
+    items: ContextMenuItemOrDivider[];
+  } | null>(null);
+
   // Beatgrid Repair Modal State
   const [beatgridRepairModal, setBeatgridRepairModal] = useState<{
     track: TrackDef;
@@ -305,7 +328,6 @@ export default function WaveformTimeline({
     const zones: TransitionOverlapZone[] = [];
     const LANE_HEIGHT = 112; // h-28 is 112px
     const LANE_GAP = 8;     // gap-2 is 8px
-    const PADDING_TOP = 12; // p-3 is 12px
 
     for (let i = 0; i < trackLayouts.length - 1; i++) {
       const layoutA = trackLayouts[i];
@@ -352,8 +374,8 @@ export default function WaveformTimeline({
         overlapDurationSec: transDurationSec,
         overlapStartPx: overlapStartSec * pxPerSec,
         overlapWidthPx: transDurationSec * pxPerSec,
-        topPx: PADDING_TOP + (i * (LANE_HEIGHT + LANE_GAP)),
-        heightPx: (LANE_HEIGHT * 2) + LANE_GAP, // Spans both Lane i and Lane i+1!
+        topPx: i * (LANE_HEIGHT + LANE_GAP),
+        heightPx: (LANE_HEIGHT * 2) + LANE_GAP, // Spans directly across Lane i and Lane i+1!
         keyComp,
       });
     }
@@ -547,6 +569,271 @@ export default function WaveformTimeline({
     };
   }, [resizingTransition, pxPerSec, transitions, liveResizedBeats, liveResizedSourceTime, onTransitionsChange]);
 
+  // Handle start dragging the entire transition overlap window
+  const handleTransitionPointerDown = (
+    e: React.PointerEvent,
+    trans: TransitionConfig,
+    trackA: TrackDef,
+    trackB: TrackDef,
+    transDurationSec: number
+  ) => {
+    // Only respond to left clicks
+    if (e.button !== 0) return;
+    e.stopPropagation();
+
+    const bpmA = trackA.bpm || 130;
+    const bpmB = trackB.bpm || 130;
+    const initialSourceTime = trans.sourceTimeSec !== undefined
+      ? trans.sourceTimeSec
+      : Math.max(0, (trackA.duration || 180) - transDurationSec);
+
+    setDraggingTransition({
+      transId: trans.id,
+      startX: e.clientX,
+      initialSourceTimeSec: initialSourceTime,
+      bpmA,
+      bpmB,
+      trackAId: trackA.id,
+      trackBId: trackB.id,
+      durationSecA: trackA.duration || 180,
+      transDurationSec,
+    });
+  };
+
+  // Transition Window Moving & Beat/Bar Snapping Effect
+  useEffect(() => {
+    if (!draggingTransition) return;
+
+    const handlePointerMove = (e: PointerEvent) => {
+      const deltaPx = e.clientX - draggingTransition.startX;
+      const deltaSec = deltaPx / pxPerSec;
+      const maxSourceTime = Math.max(0, draggingTransition.durationSecA - draggingTransition.transDurationSec);
+      const newSourceTimeSec = Math.max(0, Math.min(maxSourceTime, draggingTransition.initialSourceTimeSec + deltaSec));
+
+      setLiveResizedSourceTime(prev => ({
+        ...prev,
+        [draggingTransition.transId]: newSourceTimeSec,
+      }));
+    };
+
+    const handlePointerUp = (e: PointerEvent) => {
+      const { transId, initialSourceTimeSec, bpmA, durationSecA, transDurationSec, trackAId, trackBId } = draggingTransition;
+      const rawSourceTime = liveResizedSourceTime[transId] ?? initialSourceTimeSec;
+
+      // 1 bar = 4 beats in Track A's tempo (musical phrase alignment)
+      const beatSecA = 60 / bpmA;
+      const barSecA = beatSecA * 4;
+      const snapInterval = e.shiftKey ? beatSecA : barSecA;
+
+      // Snap transition window position along Track A
+      const maxSourceTime = Math.max(0, durationSecA - transDurationSec);
+      const snappedSourceTimeSec = Math.max(0, Math.min(maxSourceTime, Math.round(rawSourceTime / snapInterval) * snapInterval));
+
+      // Reset manual slip offset for Track B so it locks into the snapped beatgrid
+      setTrackOffsets(prev => {
+        const next = { ...prev };
+        delete next[trackBId];
+        return next;
+      });
+
+      // Clear live drag state
+      setLiveResizedSourceTime(prev => {
+        const next = { ...prev };
+        delete next[transId];
+        return next;
+      });
+
+      // Commit updated transition to set
+      const updatedTransitions = transitions.map(t => {
+        if (t.id === transId || (t.sourceTrackId === trackAId && t.targetTrackId === trackBId)) {
+          return {
+            ...t,
+            sourceTimeSec: snappedSourceTimeSec,
+          };
+        }
+        return t;
+      });
+
+      if (onTransitionsChange) {
+        onTransitionsChange(updatedTransitions);
+      }
+
+      setDraggingTransition(null);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [draggingTransition, liveResizedSourceTime, pxPerSec, transitions, onTransitionsChange]);
+
+  // Context Menu Handlers for Transition Frame and Track Lanes
+  const handleTransitionContextMenu = (e: React.MouseEvent, zone: TransitionOverlapZone) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const trans = zone.transition;
+    const trackA = zone.sourceLayout.track;
+    const trackB = zone.targetLayout.track;
+
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      title: `Übergang: ${trackA.title} ➔ ${trackB.title}`,
+      subtitle: `${trans.preset.toUpperCase()} • ${trans.durationBeats} Beats (${zone.overlapDurationSec.toFixed(1)}s)`,
+      items: [
+        {
+          id: 'open-studio',
+          label: 'Waveform Transition Studio öffnen',
+          icon: Sliders,
+          shortcut: 'Enter',
+          onClick: () => onOpenTransitionStudio(trans),
+        },
+        {
+          id: 'cue-transition',
+          label: 'Übergang sofort vorhören (Cue)',
+          icon: Play,
+          onClick: () => {
+            onSelectTransition(trans);
+            if (onSeek) onSeek(zone.overlapStartSec);
+            if (!isPlaying && onTogglePlay) onTogglePlay();
+          },
+        },
+        'divider',
+        {
+          id: 'preset-bass-swap',
+          label: 'Preset: Bass-Swap (Instant Bass Switch)',
+          badge: trans.preset === 'bass-swap' ? 'Aktiv' : undefined,
+          badgeColor: 'bg-purple-600 text-white',
+          onClick: () => {
+            const updated = transitions.map(t =>
+              t.id === trans.id
+                ? { ...t, preset: 'bass-swap' as TransitionPresetType, envelopes: generateDefaultEnvelopes('bass-swap', t.durationBeats || 32) }
+                : t
+            );
+            if (onTransitionsChange) onTransitionsChange(updated);
+          },
+        },
+        {
+          id: 'preset-eq-blend',
+          label: 'Preset: EQ-Blend (Smooth Multi-Band)',
+          badge: trans.preset === 'eq-blend' ? 'Aktiv' : undefined,
+          badgeColor: 'bg-cyan-600 text-white',
+          onClick: () => {
+            const updated = transitions.map(t =>
+              t.id === trans.id
+                ? { ...t, preset: 'eq-blend' as TransitionPresetType, envelopes: generateDefaultEnvelopes('eq-blend', t.durationBeats || 32) }
+                : t
+            );
+            if (onTransitionsChange) onTransitionsChange(updated);
+          },
+        },
+        {
+          id: 'preset-filter-sweep',
+          label: 'Preset: Filter-Sweep (High/Low Pass Sweep)',
+          badge: trans.preset === 'filter-sweep' ? 'Aktiv' : undefined,
+          badgeColor: 'bg-amber-600 text-white',
+          onClick: () => {
+            const updated = transitions.map(t =>
+              t.id === trans.id
+                ? { ...t, preset: 'filter-sweep' as TransitionPresetType, envelopes: generateDefaultEnvelopes('filter-sweep', t.durationBeats || 32) }
+                : t
+            );
+            if (onTransitionsChange) onTransitionsChange(updated);
+          },
+        },
+        'divider',
+        {
+          id: 'snap-beatgrid',
+          label: 'Taktgitter beider Tracks abgleichen',
+          icon: Activity,
+          onClick: () => {
+            setBeatgridRepairModal({
+              track: trackB,
+              reference: trackA,
+            });
+          },
+        },
+        {
+          id: 'delete-transition',
+          label: 'Übergang löschen',
+          icon: Scissors,
+          danger: true,
+          onClick: () => {
+            const updated = transitions.filter(t => t.id !== trans.id);
+            if (onTransitionsChange) onTransitionsChange(updated);
+          },
+        },
+      ],
+    });
+  };
+
+  const handleTrackContextMenu = (e: React.MouseEvent, layout: TrackLayout) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const track = layout.track;
+
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      title: `#${layout.index} ${track.title}`,
+      subtitle: `${track.artist || 'Unbekannt'} • ${track.bpm || 130} BPM • ${track.key || '8A'}`,
+      items: [
+        {
+          id: 'play-track',
+          label: 'Ab Track-Start abspielen',
+          icon: Play,
+          onClick: () => {
+            if (onSeek) onSeek(layout.startSec);
+            if (!isPlaying && onTogglePlay) onTogglePlay();
+          },
+        },
+        {
+          id: 'open-analysis',
+          label: 'Im Studio & Cue-Editor öffnen',
+          icon: Music,
+          onClick: () => {
+            if (onOpenTrackAnalysis) onOpenTrackAnalysis(track);
+          },
+        },
+        'divider',
+        {
+          id: 'snap-bar',
+          label: 'An 4-Beat Takt einrasten (Snap to Bar)',
+          icon: Clock,
+          onClick: () => {
+            const bpm = track.bpm || 130;
+            const barSec = (60 / bpm) * 4;
+            const snappedStart = Math.round(layout.startSec / barSec) * barSec;
+            setTrackOffsets(prev => ({
+              ...prev,
+              [track.id]: snappedStart - layout.baselineStartSec,
+            }));
+          },
+        },
+        {
+          id: 'align-beatgrid',
+          label: 'Taktgitter an Vor-Track ausrichten',
+          icon: Activity,
+          disabled: layout.index <= 1,
+          onClick: () => {
+            if (layout.index > 1) {
+              const prevTrack = trackLayouts[layout.index - 2]?.track;
+              setBeatgridRepairModal({
+                track,
+                reference: prevTrack,
+              });
+            }
+          },
+        },
+      ],
+    });
+  };
+
   return (
     <div 
       className="flex-1 flex flex-col bg-[#0A0C10] overflow-hidden select-none relative"
@@ -735,6 +1022,7 @@ export default function WaveformTimeline({
               return (
                 <div 
                   key={track.id} 
+                  onContextMenu={(e) => handleTrackContextMenu(e, layout)}
                   className={`relative h-28 bg-[#12141A] border rounded-xl overflow-hidden group shadow-lg flex items-center transition-colors ${
                     isDraggingThis 
                       ? 'border-purple-400 shadow-[0_0_20px_rgba(168,85,247,0.3)] bg-[#171922]' 
@@ -856,10 +1144,10 @@ export default function WaveformTimeline({
                   key={`unified-frame-${trans.id}-${zIdx}`}
                   data-transition-frame="true"
                   data-transition-id={trans.id}
-                  className={`transition-bounding-frame absolute z-30 rounded-2xl border-2 transition-all cursor-pointer pointer-events-auto backdrop-blur-[1px] flex flex-col justify-between p-2.5 group/frame relative ${
+                  className={`transition-bounding-frame absolute z-30 rounded-2xl border-2 transition-all cursor-grab active:cursor-grabbing pointer-events-auto backdrop-blur-[2px] flex flex-col justify-between p-2.5 group/frame ${
                     isTransitionActive
-                      ? 'border-purple-400 bg-purple-950/25 shadow-[0_0_35px_rgba(168,85,247,0.5)] ring-2 ring-purple-500/50'
-                      : 'border-cyan-400/90 bg-cyan-950/20 hover:border-purple-400 hover:bg-purple-950/30 shadow-[0_0_25px_rgba(6,182,212,0.25)]'
+                      ? 'border-purple-400 bg-purple-950/30 shadow-[0_0_35px_rgba(168,85,247,0.5)] ring-2 ring-purple-500/50'
+                      : 'border-cyan-400/90 bg-cyan-950/25 hover:border-purple-400 hover:bg-purple-950/30 shadow-[0_0_25px_rgba(6,182,212,0.25)]'
                   }`}
                   style={{
                     top: `${zone.topPx}px`,
@@ -867,11 +1155,13 @@ export default function WaveformTimeline({
                     width: `${Math.max(140, zone.overlapWidthPx)}px`,
                     height: `${zone.heightPx}px`,
                   }}
+                  onPointerDown={(e) => handleTransitionPointerDown(e, trans, zone.sourceLayout.track, zone.targetLayout.track, zone.overlapDurationSec)}
+                  onContextMenu={(e) => handleTransitionContextMenu(e, zone)}
                   onClick={() => {
                     onSelectTransition(trans);
                     if (onSeek) onSeek(zone.overlapStartSec);
                   }}
-                  title="Klicken, um diesen Übergang auszuwählen und direkt anzuspringen"
+                  title="Übergangsfenster: Ziehen zum freien Verschieben (rastet auf Takte ein) • Rechtsklick für Optionen"
                 >
                   {/* Left Edge Resize Handle (freely adjusts transition start & length) */}
                   <div
@@ -1109,6 +1399,19 @@ export default function WaveformTimeline({
             setBeatgridRepairModal(null);
           }}
           onClose={() => setBeatgridRepairModal(null)}
+        />
+      )}
+
+      {/* ================= TIMELINE CONTEXT MENU ================= */}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          isOpen={Boolean(contextMenu)}
+          onClose={() => setContextMenu(null)}
+          title={contextMenu.title}
+          subtitle={contextMenu.subtitle}
+          items={contextMenu.items}
         />
       )}
 

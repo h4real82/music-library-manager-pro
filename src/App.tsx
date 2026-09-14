@@ -7,6 +7,7 @@ import GraphMap from './components/GraphMap';
 import AnalyzerPanel from './components/AnalyzerPanel';
 import TrackAnalysisView from './components/TrackAnalysisView';
 import ErrorBoundary from './components/ErrorBoundary';
+import ContextMenu, { ContextMenuItemOrDivider } from './components/ContextMenu';
 import PlaylistGroups from './components/PlaylistGroups';
 import LibraryManagerModal from './components/LibraryManagerModal';
 import CamelotWheel from './components/CamelotWheel';
@@ -181,6 +182,23 @@ export default function App() {
 
   const [activeTrackForAnalysis, setActiveTrackForAnalysis] = useState<Track | null>(null);
   const [hotCues, setHotCues] = useState<Record<string, HotCue[]>>({});
+
+  // Right-Click Track Context Menu state
+  const [trackContextMenu, setTrackContextMenu] = useState<{
+    x: number;
+    y: number;
+    track: Track;
+  } | null>(null);
+
+  const handleTrackContextMenu = (e: React.MouseEvent, track: Track) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setTrackContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      track,
+    });
+  };
 
   const fallbackInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(globalMulimaEngine);
@@ -1373,6 +1391,7 @@ export default function App() {
                           <tr
                             key={track.id}
                             onClick={() => setCurrentTrack(track)}
+                            onContextMenu={(e) => handleTrackContextMenu(e, track)}
                             className={`group hover:bg-[#1A1E29] transition-colors cursor-pointer ${
                               currentTrack?.id === track.id ? 'bg-[#181C26]' : ''
                             }`}
@@ -1574,6 +1593,7 @@ export default function App() {
                   {filteredTracks.map((track) => (
                     <div 
                       key={track.id}
+                      onContextMenu={(e) => handleTrackContextMenu(e, track)}
                       className="relative aspect-square rounded-xl overflow-hidden group border border-[#242936] bg-[#161920] cursor-pointer shadow-sm hover:shadow-[#A855F7]/10 hover:border-[#A855F7]/50 transition-all"
                       onClick={() => setCurrentTrack(track)}
                     >
@@ -1982,6 +2002,85 @@ export default function App() {
 
       </div>
       )}
+
+      {/* ================= TRACK RIGHT-CLICK CONTEXT MENU ================= */}
+      {trackContextMenu && (
+        <ContextMenu
+          x={trackContextMenu.x}
+          y={trackContextMenu.y}
+          isOpen={Boolean(trackContextMenu)}
+          onClose={() => setTrackContextMenu(null)}
+          title={trackContextMenu.track.title}
+          subtitle={`${trackContextMenu.track.artist || 'Unbekannt'} • ${trackContextMenu.track.bpm || 120} BPM • ${trackContextMenu.track.key || '8A'}`}
+          items={[
+            {
+              id: 'play-track',
+              label: isPlaying && currentTrack?.id === trackContextMenu.track.id ? 'Pausieren' : 'Vorhören / Abspielen',
+              icon: isPlaying && currentTrack?.id === trackContextMenu.track.id ? Pause : Play,
+              onClick: () => {
+                if (currentTrack?.id === trackContextMenu.track.id) {
+                  setIsPlaying(!isPlaying);
+                  if (audioRef.current) {
+                    if (isPlaying) audioRef.current.pause();
+                    else audioRef.current.play();
+                  }
+                } else {
+                  setCurrentTrack(trackContextMenu.track);
+                  setIsPlaying(true);
+                  if (audioRef.current) audioRef.current.play();
+                }
+              },
+            },
+            {
+              id: 'open-analysis',
+              label: 'Im Studio & Cue-Editor öffnen',
+              icon: Activity,
+              onClick: () => setActiveTrackForAnalysis(trackContextMenu.track),
+            },
+            {
+              id: 'add-to-set',
+              label: 'Zum DJ-Set hinzufügen',
+              icon: Plus,
+              badge: 'DJ Set',
+              badgeColor: 'bg-purple-600 text-white',
+              onClick: () => addToPlaylist(trackContextMenu.track),
+            },
+            'divider',
+            {
+              id: 'copy-key-bpm',
+              label: 'Camelot & BPM in Zwischenablage',
+              icon: Copy,
+              shortcut: `${trackContextMenu.track.key || '8A'} / ${trackContextMenu.track.bpm || 120}`,
+              onClick: () => {
+                navigator.clipboard.writeText(`${trackContextMenu.track.key || '8A'} - ${trackContextMenu.track.bpm || 120} BPM`);
+              },
+            },
+            {
+              id: 'copy-path',
+              label: 'Dateipfad kopieren',
+              icon: HardDrive,
+              disabled: !trackContextMenu.track.filePath && !trackContextMenu.track.path,
+              onClick: () => {
+                const p = trackContextMenu.track.filePath || trackContextMenu.track.path;
+                if (p) navigator.clipboard.writeText(p);
+              },
+            },
+            'divider',
+            {
+              id: 'remove-track',
+              label: 'Aus Bibliothek entfernen',
+              icon: Trash2,
+              danger: true,
+              onClick: () => {
+                const targetId = trackContextMenu.track.id;
+                setTracks(prev => prev.filter(t => t.id !== targetId));
+                setPlaylist(prev => prev.filter(t => t.id !== targetId));
+              },
+            },
+          ]}
+        />
+      )}
+
     </div>
   );
 }

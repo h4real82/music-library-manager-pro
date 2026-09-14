@@ -49,6 +49,7 @@ import { deepAudioAnalyze, freqToNote, decodeAudio } from '../lib/deepAudioAnaly
 import { fetchOnlineTrackMetadata, mergeCandidateIntoTrack, OnlineLookupResult } from '../lib/onlineMetadataService';
 import { generateMixedInKeyStructure } from '../lib/mixedInKeyDetection';
 import { getTrackWaveformSlice, getTrackOverviewWaveform } from '../lib/waveformGenerator';
+import ContextMenu, { ContextMenuItemOrDivider } from './ContextMenu';
 
 interface TrackAnalysisViewProps {
   track: TrackDef;
@@ -255,6 +256,40 @@ export default function TrackAnalysisView({
   const [tapTimes, setTapTimes] = useState<number[]>([]);
   const [tapFeedbackBpm, setTapFeedbackBpm] = useState<number | null>(null);
   const [autoSnapFeedback, setAutoSnapFeedback] = useState(false);
+
+  // Inline BPM edit state
+  const [isEditingBpm, setIsEditingBpm] = useState(false);
+  const [editBpmVal, setEditBpmVal] = useState<string>('');
+
+  // Waveform Context Menu state
+  const [waveformContextMenu, setWaveformContextMenu] = useState<{
+    x: number;
+    y: number;
+    title: string;
+    subtitle?: string;
+    items: ContextMenuItemOrDivider[];
+  } | null>(null);
+
+  const handleCommitBpm = () => {
+    const parsed = parseFloat(editBpmVal);
+    if (!isNaN(parsed) && parsed >= 40 && parsed <= 300) {
+      const rounded = Math.round(parsed * 100) / 100;
+      setCurrentBpm(rounded);
+      if (analysisData?.beatGrid) {
+        const intervalSec = 60 / rounded;
+        setAnalysisData({
+          ...analysisData,
+          beatGrid: {
+            ...analysisData.beatGrid,
+            bpm: rounded,
+            intervalSec,
+          },
+        });
+      }
+      onUpdateTrack(track.id, { bpm: rounded });
+    }
+    setIsEditingBpm(false);
+  };
 
   // Metadata Edit Modal state
   const [isEditingMetadata, setIsEditingMetadata] = useState(false);
@@ -1249,6 +1284,120 @@ export default function TrackAnalysisView({
     }
   };
 
+  const addHotCueAtTime = (timeSec: number) => {
+    const nextSlot = ['1', '2', '3', '4', '5', '6', '7', '8'].find(
+      slot => !hotCues.some(c => c.slot === slot)
+    );
+    if (!nextSlot) return;
+
+    const colors = ['#EF4444', '#F97316', '#FBBF24', '#22C55E', '#06B6D4', '#3B82F6', '#8B5CF6', '#EC4899'];
+    const newCue: HotCue = {
+      id: `cue-${Date.now()}`,
+      name: `Cue ${nextSlot}`,
+      slot: nextSlot,
+      timeSec: Math.round(timeSec * 1000) / 1000,
+      color: colors[(parseInt(nextSlot, 10) - 1) % colors.length],
+    };
+    const updated = [...hotCues, newCue].sort((a, b) => a.timeSec - b.timeSec);
+    setHotCues(updated);
+    onUpdateTrack(track.filePath || track.id, { hotCues: updated });
+  };
+
+  const activateLoopAt = (startSec: number, beatsCount: number) => {
+    const beatSec = 60 / currentBpm;
+    setActiveLoopLength(beatsCount);
+    setLoopStartSec(startSec);
+    setLoopEndSec(Math.min(duration, startSec + (beatsCount * beatSec)));
+    setIsDeckLoopActive(true);
+  };
+
+  const handleWaveformContextMenu = (e: React.MouseEvent<HTMLDivElement>, windowStart: number, windowDuration: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickNorm = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const targetSec = Math.max(0, Math.min(duration, windowStart + clickNorm * windowDuration));
+
+    const beatSec = 60 / currentBpm;
+    const barSec = beatSec * 4;
+    const m = Math.floor(targetSec / 60);
+    const s = Math.floor(targetSec % 60).toString().padStart(2, '0');
+    const timeStr = `${m}:${s}`;
+
+    setWaveformContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      title: `Precision Waveform @ ${timeStr}`,
+      subtitle: `Takt ${(targetSec / barSec + 1).toFixed(1)} • ${currentBpm} BPM`,
+      items: [
+        {
+          id: 'set-hotcue',
+          label: 'Hot-Cue an dieser Position setzen',
+          icon: Plus,
+          onClick: () => {
+            handleSeek(targetSec);
+            addHotCueAtTime(targetSec);
+          },
+        },
+        {
+          id: 'jump-play',
+          label: 'Hierher springen & abspielen',
+          icon: Play,
+          onClick: () => {
+            handleSeek(targetSec);
+            if (!isPlaying) togglePlay();
+          },
+        },
+        'divider',
+        {
+          id: 'set-grid-anchor',
+          label: 'Taktgitter-Anker (Downbeat 1.1) hier setzen',
+          icon: Grid,
+          onClick: () => {
+            const newOffsetMs = Math.round(targetSec * 1000);
+            setGridOffsetMs(newOffsetMs);
+            onUpdateTrack(track.id, { beatgridOffsetMs: newOffsetMs });
+          },
+        },
+        {
+          id: 'loop-4',
+          label: '4-Beat Loop hier aktivieren',
+          icon: RotateCcw,
+          onClick: () => {
+            handleSeek(targetSec);
+            activateLoopAt(targetSec, 4);
+          },
+        },
+        {
+          id: 'loop-8',
+          label: '8-Beat Loop hier aktivieren',
+          icon: RotateCcw,
+          onClick: () => {
+            handleSeek(targetSec);
+            activateLoopAt(targetSec, 8);
+          },
+        },
+        {
+          id: 'loop-16',
+          label: '16-Beat Loop hier aktivieren',
+          icon: RotateCcw,
+          onClick: () => {
+            handleSeek(targetSec);
+            activateLoopAt(targetSec, 16);
+          },
+        },
+        'divider',
+        {
+          id: 'jump-start',
+          label: 'Zum Track-Anfang springen (0:00)',
+          icon: RotateCcw,
+          onClick: () => handleSeek(0),
+        },
+      ],
+    });
+  };
+
   const handleResetDsp = () => {
     setEqBass(0);
     setEqMid(0);
@@ -1575,9 +1724,37 @@ export default function TrackAnalysisView({
           {/* Right: BPM, Pitch %, Key & Vertical Pitch Slider */}
           <div className="flex items-center gap-3 shrink-0">
             <div className="text-right flex flex-col justify-center">
-              <div className="text-3xl font-mono font-black text-white tracking-wider">
-                {effectiveBpm}
-              </div>
+              {isEditingBpm ? (
+                <div className="flex items-center justify-end">
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="40"
+                    max="300"
+                    autoFocus
+                    value={editBpmVal}
+                    onChange={(e) => setEditBpmVal(e.target.value)}
+                    onBlur={handleCommitBpm}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleCommitBpm();
+                      if (e.key === 'Escape') setIsEditingBpm(false);
+                    }}
+                    className="w-24 text-2xl font-mono font-black text-amber-400 bg-[#0A0C10] border border-amber-400 rounded px-1.5 py-0.5 text-right focus:outline-none focus:ring-2 focus:ring-amber-400 shadow-lg"
+                    title="BPM eingeben und Enter oder außerhalb klicken zum Einrasten"
+                  />
+                </div>
+              ) : (
+                <div
+                  onDoubleClick={() => {
+                    setEditBpmVal(String(currentBpm));
+                    setIsEditingBpm(true);
+                  }}
+                  className="text-3xl font-mono font-black text-white tracking-wider cursor-pointer hover:text-amber-300 transition-colors select-none"
+                  title="Doppelklick zum direkten Bearbeiten der BPM (rastet beim Klick außerhalb ein)"
+                >
+                  {effectiveBpm}
+                </div>
+              )}
               <div className="flex items-center justify-end gap-1.5 text-xs font-mono">
                 <span className="text-gray-400">{pitchPctStr}</span>
                 <span className="text-amber-400 font-bold">{keyStr}</span>
@@ -1585,8 +1762,12 @@ export default function TrackAnalysisView({
             </div>
 
             {/* Vertical Pitch Fader */}
-            <div className="flex flex-col items-center bg-[#12141A] p-1.5 rounded-lg border border-[#242936] h-16 w-8 relative justify-between">
-              <span className="text-[7px] font-mono text-gray-500">+8%</span>
+            <div 
+              onDoubleClick={() => handlePitchChange(0)}
+              className="flex flex-col items-center bg-[#12141A] p-1.5 rounded-lg border border-[#242936] hover:border-amber-400/50 h-16 w-8 relative justify-between cursor-pointer transition-colors"
+              title="Tempo Fader (Doppelklick zum Zurücksetzen auf 0.0% Standard)"
+            >
+              <span className="text-[7px] font-mono text-gray-500 pointer-events-none">+8%</span>
               <input 
                 type="range"
                 min="-8"
@@ -1594,10 +1775,14 @@ export default function TrackAnalysisView({
                 step="0.1"
                 value={pitchSlider}
                 onChange={(e) => handlePitchChange(parseFloat(e.target.value))}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  handlePitchChange(0);
+                }}
                 className="w-12 h-1 accent-amber-400 -rotate-90 origin-center my-auto cursor-pointer"
-                title={`Tempo Slider: ${pitchPctStr}`}
+                title={`Tempo Slider: ${pitchPctStr} (Doppelklick zum Zurücksetzen auf 0.0% Standard)`}
               />
-              <span className="text-[7px] font-mono text-gray-500">-8%</span>
+              <span className="text-[7px] font-mono text-gray-500 pointer-events-none">-8%</span>
             </div>
           </div>
 
@@ -1756,13 +1941,14 @@ export default function TrackAnalysisView({
         <div 
           className={`${heightClass} rounded-xl border border-[#1e2a3e] relative overflow-hidden cursor-pointer flex flex-col justify-between shadow-2xl group select-none`}
           style={{ background: 'linear-gradient(180deg, #020b18 0%, #061836 50%, #030f24 100%)' }}
+          onContextMenu={(e) => handleWaveformContextMenu(e, windowStart, windowDuration)}
           onClick={(e) => {
             const rect = e.currentTarget.getBoundingClientRect();
             const clickNorm = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
             const targetSec = windowStart + clickNorm * windowDuration;
             handleSeek(Math.max(0, Math.min(duration, targetSec)));
           }}
-          title="Klicken zum schnellen Navigieren im aktuellen Takt-Fenster"
+          title="Klicken zum schnellen Navigieren • Rechtsklick für Hot-Cues, Loops & Grid-Optionen"
         >
           {/* Active Loop Region Highlight */}
           {isDeckLoopActive && loopStartSec !== null && loopEndSec !== null && (
@@ -3858,6 +4044,19 @@ export default function TrackAnalysisView({
 
           </div>
         </div>
+      )}
+
+      {/* ================= WAVEFORM CONTEXT MENU ================= */}
+      {waveformContextMenu && (
+        <ContextMenu
+          x={waveformContextMenu.x}
+          y={waveformContextMenu.y}
+          isOpen={Boolean(waveformContextMenu)}
+          onClose={() => setWaveformContextMenu(null)}
+          title={waveformContextMenu.title}
+          subtitle={waveformContextMenu.subtitle}
+          items={waveformContextMenu.items}
+        />
       )}
 
     </div>

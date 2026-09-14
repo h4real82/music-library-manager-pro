@@ -7,6 +7,7 @@ import { PRESET_META } from './DjSetPlayer';
 import TransitionOverlapStudio from './TransitionOverlapStudio';
 import WaveformTimeline from './WaveformTimeline';
 import ErrorBoundary from './ErrorBoundary';
+import ContextMenu, { ContextMenuItemOrDivider } from './ContextMenu';
 import { generateDefaultEnvelopes } from '../lib/djMixerLogic';
 
 interface GraphMapProps {
@@ -133,6 +134,15 @@ export default function GraphMap({
 
   // Active Transition Config Modal / Popover on edge
   const [editingTransition, setEditingTransition] = useState<TransitionConfig | null>(null);
+
+  // Graph Context Menu state
+  const [graphContextMenu, setGraphContextMenu] = useState<{
+    x: number;
+    y: number;
+    title: string;
+    subtitle?: string;
+    items: ContextMenuItemOrDivider[];
+  } | null>(null);
 
   // Initialize layout positions for playlist tracks
   useEffect(() => {
@@ -444,6 +454,122 @@ export default function GraphMap({
     return { x, y };
   };
 
+  const handleNodeContextMenu = (e: React.MouseEvent, track: Track) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setGraphContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      title: track.title,
+      subtitle: `${track.artist || 'Unbekannt'} • ${track.bpm || 120} BPM • ${track.key || '8A'}`,
+      items: [
+        {
+          id: 'open-studio',
+          label: 'Studio & Cue-Editor öffnen',
+          icon: Sliders,
+          onClick: () => onAnalyze(track),
+        },
+        {
+          id: 'preview-track',
+          label: 'Track vorhören',
+          icon: Play,
+          onClick: () => onPlaySegment(track, 0),
+        },
+        'divider',
+        {
+          id: 'arm-connection',
+          label: 'Übergang von diesem Track starten',
+          icon: Zap,
+          onClick: () => {
+            const slots = getTrackSlots(track);
+            const outroSlot = slots.find(s => s.id.includes('outro') || s.slotNumber === 8) || slots[slots.length - 1];
+            if (outroSlot) {
+              setArmedSourcePort({
+                trackId: track.id,
+                slotId: outroSlot.id,
+                slotName: outroSlot.name,
+                slotNumber: outroSlot.slotNumber,
+                timeSec: outroSlot.timeSec,
+                isRight: true,
+                startPos: getNodePortCoord(track.id, slots.indexOf(outroSlot), true),
+              });
+            }
+          },
+        },
+        'divider',
+        {
+          id: 'delete-transitions',
+          label: 'Alle Verbindungen dieses Tracks trennen',
+          icon: Scissors,
+          onClick: () => {
+            const updated = localTransitions.filter(
+              t => t.sourceTrackId !== track.id && t.targetTrackId !== track.id
+            );
+            updateTransitions(updated);
+          },
+        },
+      ],
+    });
+  };
+
+  const handleEdgeContextMenu = (e: React.MouseEvent, tr: TransitionConfig) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setGraphContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      title: `Übergang: ${tr.preset.toUpperCase()} (${tr.durationBeats} Beats)`,
+      items: [
+        {
+          id: 'open-studio',
+          label: 'Waveform Transition Studio öffnen',
+          icon: Sliders,
+          onClick: () => {
+            setEditingTransition(tr);
+            if (onSelectTransition) onSelectTransition(tr);
+          },
+        },
+        'divider',
+        {
+          id: 'preset-bass-swap',
+          label: 'Preset: Bass-Swap',
+          badge: tr.preset === 'bass-swap' ? 'Aktiv' : undefined,
+          badgeColor: 'bg-purple-600 text-white',
+          onClick: () => {
+            const updated = localTransitions.map(t =>
+              t.id === tr.id ? { ...t, preset: 'bass-swap' as TransitionPresetType, envelopes: generateDefaultEnvelopes('bass-swap', t.durationBeats || 32) } : t
+            );
+            updateTransitions(updated);
+          },
+        },
+        {
+          id: 'preset-eq-blend',
+          label: 'Preset: EQ-Blend',
+          badge: tr.preset === 'eq-blend' ? 'Aktiv' : undefined,
+          badgeColor: 'bg-cyan-600 text-white',
+          onClick: () => {
+            const updated = localTransitions.map(t =>
+              t.id === tr.id ? { ...t, preset: 'eq-blend' as TransitionPresetType, envelopes: generateDefaultEnvelopes('eq-blend', t.durationBeats || 32) } : t
+            );
+            updateTransitions(updated);
+          },
+        },
+        'divider',
+        {
+          id: 'delete-transition',
+          label: 'Übergang entfernen',
+          icon: Trash2,
+          danger: true,
+          onClick: () => {
+            const updated = localTransitions.filter(t => t.id !== tr.id);
+            updateTransitions(updated);
+            if (editingTransition?.id === tr.id) setEditingTransition(null);
+          },
+        },
+      ],
+    });
+  };
+
   const formatSeconds = (sec: number) => {
     const m = Math.floor(sec / 60);
     const s = Math.floor(sec % 60);
@@ -733,11 +859,13 @@ export default function GraphMap({
                   setEditingTransition(tr);
                   if (onSelectTransition) onSelectTransition(tr);
                 }}
+                onContextMenu={(e) => handleEdgeContextMenu(e, tr)}
                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold font-mono tracking-wider transition-all shadow-xl backdrop-blur-md hover:scale-110 active:scale-95 ${
                   isActive 
                     ? 'bg-purple-900/90 border-purple-400 text-white ring-2 ring-purple-500/50 shadow-[0_0_15px_rgba(168,85,247,0.7)]' 
                     : 'bg-[#161920]/95 border-[#2E3445] text-gray-200 hover:border-purple-400 hover:text-white'
                 }`}
+                title="Klicken zum Bearbeiten • Rechtsklick für Optionen"
               >
                 <Icon className="w-3 h-3" style={{ color: presetMeta.color }} />
                 <span>{presetMeta.name}</span>
@@ -760,6 +888,7 @@ export default function GraphMap({
           return (
             <div
               key={track.id}
+              onContextMenu={(e) => handleNodeContextMenu(e, track)}
               className={`absolute flex flex-col w-[230px] bg-[#161920] border rounded-2xl shadow-2xl z-20 transition-all ${
                 isSelected 
                   ? 'border-purple-500 shadow-[0_0_24px_rgba(168,85,247,0.35)]' 
@@ -954,6 +1083,19 @@ export default function GraphMap({
             }}
           />
         </ErrorBoundary>
+      )}
+
+      {/* ================= GRAPH CONTEXT MENU ================= */}
+      {graphContextMenu && (
+        <ContextMenu
+          x={graphContextMenu.x}
+          y={graphContextMenu.y}
+          isOpen={Boolean(graphContextMenu)}
+          onClose={() => setGraphContextMenu(null)}
+          title={graphContextMenu.title}
+          subtitle={graphContextMenu.subtitle}
+          items={graphContextMenu.items}
+        />
       )}
 
     </div>
