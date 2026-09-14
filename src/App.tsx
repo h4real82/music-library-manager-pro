@@ -1058,9 +1058,11 @@ export default function App() {
                 </>
               )}
             </h2>
-            <span className="text-xs font-mono text-gray-500">
-              ({filteredTracks.length} {filteredTracks.length === 1 ? 'Track' : 'Tracks'})
-            </span>
+            {viewMode !== 'graph' && (
+              <span className="text-xs font-mono text-gray-500">
+                ({filteredTracks.length} {filteredTracks.length === 1 ? 'Track' : 'Tracks'})
+              </span>
+            )}
 
             {selectedKey && (
               <button

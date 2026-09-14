@@ -715,22 +715,42 @@ export function generateHarmonizedSet(rawTracks: TrackDef[]): {
   if (rawTracks.length === 0) return { orderedTracks: [], transitions: [] };
   if (rawTracks.length === 1) return { orderedTracks: [rawTracks[0]], transitions: [] };
 
-  // Greedy TSP / nearest-neighbor harmonic path search
+  // Score transition quality between two tracks
+  const scoreTransitionPair = (src: TrackDef, tgt: TrackDef): number => {
+    const keyComp = evaluateKeyCompatibility(src.key, tgt.key);
+    const bpmA = src.bpm || 130;
+    const bpmB = tgt.bpm || 130;
+    const diffBpm = Math.abs(bpmA - bpmB);
+    const energyA = Number(src.energy) || 6;
+    const energyB = Number(tgt.energy) || 6;
+    const energyDelta = energyB - energyA;
+
+    let score = keyComp.score; // 0..100
+    // BPM difference penalty (penalize large tempo steps)
+    score -= diffBpm * 3.5;
+
+    // Energy flow reward: gradual build or steady flow is rewarded
+    if (energyDelta >= 0 && energyDelta <= 2) {
+      score += 15;
+    } else if (energyDelta < -2) {
+      score -= Math.abs(energyDelta) * 6; // penalize sudden energy drops
+    }
+
+    return score;
+  };
+
+  // 1. Intelligent Track Ordering: Greedy path with 2-opt local search optimization
   const remaining = [...rawTracks];
   const ordered: TrackDef[] = [remaining.shift()!];
 
   while (remaining.length > 0) {
     const current = ordered[ordered.length - 1];
     let bestIdx = 0;
-    let bestScore = -1000;
+    let bestScore = -9999;
 
     for (let i = 0; i < remaining.length; i++) {
       const candidate = remaining[i];
-      const keyComp = evaluateKeyCompatibility(current.key, candidate.key);
-      const tempo = calculateTempoSync(current.bpm || 130, candidate.bpm || 130);
-      
-      // Score: Key harmony (0-100) minus BPM penalty (e.g. 2.5 pts per BPM diff)
-      const score = keyComp.score - (tempo.diffBpm * 2.5);
+      const score = scoreTransitionPair(current, candidate);
       if (score > bestScore) {
         bestScore = score;
         bestIdx = i;
@@ -740,7 +760,29 @@ export function generateHarmonizedSet(rawTracks: TrackDef[]): {
     ordered.push(remaining.splice(bestIdx, 1)[0]);
   }
 
-  // Generate transitions between consecutive tracks
+  // 2-opt local optimization if <= 16 tracks to eliminate any remaining harmonic clashes
+  if (ordered.length >= 4 && ordered.length <= 20) {
+    let improved = true;
+    let passes = 0;
+    while (improved && passes < 10) {
+      improved = false;
+      passes++;
+      for (let i = 1; i < ordered.length - 2; i++) {
+        for (let j = i + 1; j < ordered.length - 1; j++) {
+          const currentScore = scoreTransitionPair(ordered[i - 1], ordered[i]) + scoreTransitionPair(ordered[j], ordered[j + 1]);
+          const swappedScore = scoreTransitionPair(ordered[i - 1], ordered[j]) + scoreTransitionPair(ordered[i], ordered[j + 1]);
+          if (swappedScore > currentScore + 8) {
+            // Reverse segment between i and j
+            const segment = ordered.slice(i, j + 1).reverse();
+            ordered.splice(i, segment.length, ...segment);
+            improved = true;
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Intelligent Transition Placement, Best Preset & Optimal Length
   const transitions: TransitionConfig[] = [];
 
   for (let i = 0; i < ordered.length - 1; i++) {
@@ -749,35 +791,85 @@ export function generateHarmonizedSet(rawTracks: TrackDef[]): {
 
     const keyComp = evaluateKeyCompatibility(src.key, tgt.key);
     const tempo = calculateTempoSync(src.bpm || 130, tgt.bpm || 130);
+    const bpmA = src.bpm || 130;
+    const bpmB = tgt.bpm || 130;
+    const diffBpm = tempo.diffBpm;
+    const energyA = Number(src.energy) || 6;
+    const energyB = Number(tgt.energy) || 6;
+    const energyDelta = energyB - energyA;
 
+    // A. Select Best Transition Preset & Optimal Beat Length
     let preset: TransitionPresetType = 'bass-swap';
-    if (keyComp.type === 'perfect' || keyComp.type === 'relative') {
-      preset = 'eq-blend';
-    } else if (keyComp.type === 'clash') {
+    let durationBeats: number = 32;
+
+    const isHarmonic = keyComp.type === 'perfect' || keyComp.type === 'relative';
+    const isCompatible = keyComp.type === 'compatible' || keyComp.type === 'energy-boost';
+
+    if (diffBpm > 6) {
+      // Large tempo jump: quick filter-sweep or cut to avoid awkward pitch warp
       preset = 'filter-sweep';
+      durationBeats = 16;
+    } else if (isHarmonic) {
+      // Harmonic match: long, smooth 3-band EQ blend
+      preset = 'eq-blend';
+      durationBeats = (src.duration && src.duration > 210) ? 64 : 32;
+    } else if (isCompatible) {
+      if (energyDelta >= 1) {
+        // Energy increase: punchy bass-swap on the downbeat
+        preset = 'bass-swap';
+        durationBeats = 32;
+      } else {
+        preset = 'eq-blend';
+        durationBeats = 32;
+      }
+    } else {
+      // Key clash: high-pass filter sweep drains conflicting low/mid frequencies
+      preset = 'filter-sweep';
+      durationBeats = 16;
     }
 
-    const durationBeats = 32;
-    const bpm = src.bpm || 130;
-    const durationSec = durationBeats * (60 / bpm);
-    const trackDuration = src.duration || 180;
-    const sourceTimeSec = Math.max(0, trackDuration - durationSec);
-    const targetTimeSec = 0;
+    // B. Calculate Accurate Musical Timing & Cue Points
+    const beatSecA = 60 / bpmA;
+    const barSecA = beatSecA * 4;
+    const transDurationSec = durationBeats * beatSecA;
+    const trackDurationA = src.duration || 180;
+
+    // Search for explicit Outro / Mix-out HotCue in Track A
+    const outroCue = src.hotCues?.find(c => 
+      (c.name && /outro|mixout|out|breakdown|end/i.test(c.name)) || c.slot === 8 || c.slot === 7
+    );
+
+    let sourceTimeSec: number;
+    if (outroCue && (outroCue.timeMs / 1000) >= transDurationSec && (outroCue.timeMs / 1000) <= trackDurationA - barSecA) {
+      sourceTimeSec = Math.floor((outroCue.timeMs / 1000) / barSecA) * barSecA;
+    } else {
+      // Align to musical bar phrase before end (leaving 2 bars buffer at track end)
+      const rawOutroStart = Math.max(0, trackDurationA - transDurationSec - (barSecA * 2));
+      sourceTimeSec = Math.floor(rawOutroStart / barSecA) * barSecA;
+    }
+
+    // Search for explicit Intro HotCue in Track B
+    const introCue = tgt.hotCues?.find(c => 
+      (c.name && /intro|mixin|in|kick|bass/i.test(c.name)) || c.slot === 1
+    );
+    const targetTimeSec = (introCue && introCue.timeMs > 0 && introCue.timeMs < 30000)
+      ? Math.floor((introCue.timeMs / 1000) / (60 / bpmB * 4)) * (60 / bpmB * 4)
+      : 0;
 
     transitions.push({
       id: `tr-auto-${src.id}-${tgt.id}`,
       sourceTrackId: src.id,
-      sourceSlotId: `slot-3-${src.id}`,
-      sourceSlotName: 'Outro Transition',
-      sourceSlotNumber: 3,
+      sourceSlotId: outroCue ? `slot-${outroCue.slot}-${src.id}` : `slot-outro-${src.id}`,
+      sourceSlotName: outroCue?.name || 'Outro Transition',
+      sourceSlotNumber: outroCue?.slot || 8,
       sourceTimeSec,
       targetTrackId: tgt.id,
-      targetSlotId: `slot-1-${tgt.id}`,
-      targetSlotName: 'Intro Cue',
-      targetSlotNumber: 1,
+      targetSlotId: introCue ? `slot-${introCue.slot}-${tgt.id}` : `slot-intro-${tgt.id}`,
+      targetSlotName: introCue?.name || 'Intro Cue',
+      targetSlotNumber: introCue?.slot || 1,
       targetTimeSec,
       durationBeats,
-      durationSec,
+      durationSec: transDurationSec,
       preset,
       envelopes: generateDefaultEnvelopes(preset, durationBeats),
       tempoSync: true,

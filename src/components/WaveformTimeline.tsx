@@ -200,8 +200,8 @@ export default function WaveformTimeline({
     return unsubscribe;
   }, []);
 
-  // Manual slip / timing offsets for each track (in seconds)
-  const [trackOffsets, setTrackOffsets] = useState<Record<string, number>>({});
+  // Persistent timeline start positions for each track (in seconds)
+  const [trackStartTimes, setTrackStartTimes] = useState<Record<string, number>>({});
 
   // Waveform Drag & Slip State
   const [draggingTrackId, setDraggingTrackId] = useState<string | null>(null);
@@ -254,6 +254,7 @@ export default function WaveformTimeline({
   const pxPerSec = 3.2 * zoomLevel;
 
   // Compute start and end times for each track in the set
+  // Completely decoupled from transition window resizing and dragging!
   const trackLayouts: TrackLayout[] = useMemo(() => {
     const layouts: TrackLayout[] = [];
 
@@ -261,38 +262,28 @@ export default function WaveformTimeline({
       const track = tracks[i];
       const duration = track.duration || 180;
 
-      let baselineStartSec = 0;
-      let outTrans: TransitionConfig | undefined;
-      let inTrans: TransitionConfig | undefined;
-
+      // Default baseline start time when track has not yet been dragged or set:
+      // Track 0 starts at 0. Subsequent tracks overlap with previous track by 32 beats.
+      let defaultStartSec = 0;
       if (i > 0) {
         const prevLayout = layouts[i - 1];
         const prevTrack = prevLayout.track;
         const prevBpm = prevTrack.bpm || 130;
+        const prevBarSec = 4 * (60 / prevBpm);
+        const defaultOverlapSec = 32 * (60 / prevBpm);
+        defaultStartSec = Math.max(0, prevLayout.endSec - defaultOverlapSec);
+        defaultStartSec = Math.floor(defaultStartSec / prevBarSec) * prevBarSec;
+      }
 
+      let inTrans: TransitionConfig | undefined;
+      let outTrans: TransitionConfig | undefined;
+
+      if (i > 0) {
+        const prevTrack = layouts[i - 1].track;
         inTrans = transitions.find(t => 
           (t.sourceTrackId === prevTrack.id && t.targetTrackId === track.id) ||
           (t.sourceTrackId === prevTrack.id)
         );
-
-        const inTransKey = inTrans ? inTrans.id : `tr-${prevTrack.id}-${track.id}`;
-        const durationBeats = liveResizedBeats[inTransKey] ?? inTrans?.durationBeats ?? 32;
-        const transDurationSec = durationBeats * (60 / prevBpm);
-
-        // Transition is firmly anchored to prevTrack's mixout position on the master timeline
-        const defaultPrevMixout = Math.max(0, prevLayout.durationSec - transDurationSec);
-        const prevMixoutSec = liveResizedSourceTime[inTransKey] ?? (inTrans?.sourceTimeSec !== undefined
-          ? inTrans.sourceTimeSec
-          : defaultPrevMixout);
-
-        const transFrameStartSec = prevLayout.startSec + prevMixoutSec;
-
-        const currMixinSec = inTrans?.targetTimeSec !== undefined
-          ? inTrans.targetTimeSec
-          : 0;
-
-        // Baseline start lines up Track i's mixin point with the transition window
-        baselineStartSec = Math.max(0, transFrameStartSec - currMixinSec);
       }
 
       if (i < tracks.length - 1) {
@@ -303,15 +294,16 @@ export default function WaveformTimeline({
         );
       }
 
-      // Incorporate manual timeline slip offset
-      const manualOffset = (trackOffsets[track.id] || 0) + (draggingTrackId === track.id ? activeDragDeltaSec : 0);
-      const startSec = Math.max(0, baselineStartSec + manualOffset);
+      // Track start position on timeline is determined by trackStartTimes, with live drag delta applied
+      const baseStart = trackStartTimes[track.id] !== undefined ? trackStartTimes[track.id] : defaultStartSec;
+      const dragDelta = draggingTrackId === track.id ? activeDragDeltaSec : 0;
+      const startSec = Math.max(0, baseStart + dragDelta);
       const endSec = startSec + duration;
 
       layouts.push({
         track,
         index: i + 1,
-        baselineStartSec,
+        baselineStartSec: defaultStartSec,
         startSec,
         durationSec: duration,
         endSec,
@@ -320,7 +312,7 @@ export default function WaveformTimeline({
       });
     }
     return layouts;
-  }, [tracks, transitions, trackOffsets, draggingTrackId, activeDragDeltaSec, liveResizedBeats, liveResizedSourceTime]);
+  }, [tracks, transitions, trackStartTimes, draggingTrackId, activeDragDeltaSec]);
 
   // Compute unified transition overlap zones that span ACROSS BOTH LANES
   // The transition frame STAYS ANCHORED to Track A (source track)
@@ -405,6 +397,21 @@ export default function WaveformTimeline({
   const handleAutomixClick = () => {
     if (!onAutomix || tracks.length < 2) return;
     const result = generateHarmonizedSet(tracks);
+    const newStartTimes: Record<string, number> = {};
+    for (let i = 0; i < result.orderedTracks.length; i++) {
+      const trk = result.orderedTracks[i];
+      if (i === 0) {
+        newStartTimes[trk.id] = 0;
+      } else {
+        const prevTrk = result.orderedTracks[i - 1];
+        const prevStart = newStartTimes[prevTrk.id] || 0;
+        const trans = result.transitions[i - 1];
+        const sourceTime = trans?.sourceTimeSec ?? Math.max(0, (prevTrk.duration || 180) - (trans?.durationSec || 30));
+        const targetTime = trans?.targetTimeSec ?? 0;
+        newStartTimes[trk.id] = Math.max(0, prevStart + sourceTime - targetTime);
+      }
+    }
+    setTrackStartTimes(newStartTimes);
     onAutomix(result.orderedTracks, result.transitions);
   };
 
@@ -451,12 +458,9 @@ export default function WaveformTimeline({
         const snappedElapsed = Math.round(elapsedFromRef / snapInterval) * snapInterval;
         const snappedStart = Math.max(0, refStart + snappedElapsed);
 
-        // Record final offset relative to baselineStartSec
-        const finalOffset = snappedStart - layout.baselineStartSec;
-
-        setTrackOffsets(prev => ({
+        setTrackStartTimes(prev => ({
           ...prev,
-          [trackId]: finalOffset,
+          [trackId]: snappedStart,
         }));
       }
 
@@ -629,13 +633,6 @@ export default function WaveformTimeline({
       const maxSourceTime = Math.max(0, durationSecA - transDurationSec);
       const snappedSourceTimeSec = Math.max(0, Math.min(maxSourceTime, Math.round(rawSourceTime / snapInterval) * snapInterval));
 
-      // Reset manual slip offset for Track B so it locks into the snapped beatgrid
-      setTrackOffsets(prev => {
-        const next = { ...prev };
-        delete next[trackBId];
-        return next;
-      });
-
       // Clear live drag state
       setLiveResizedSourceTime(prev => {
         const next = { ...prev };
@@ -687,9 +684,9 @@ export default function WaveformTimeline({
       items: [
         {
           id: 'open-studio',
-          label: 'Waveform Transition Studio öffnen',
-          icon: Sliders,
-          shortcut: 'Enter',
+          label: 'Übergangsfenster vergrößern / Detail-Studio öffnen',
+          icon: Maximize2,
+          shortcut: 'Doppelklick / Enter',
           onClick: () => onOpenTransitionStudio(trans),
         },
         {
@@ -1161,7 +1158,11 @@ export default function WaveformTimeline({
                     onSelectTransition(trans);
                     if (onSeek) onSeek(zone.overlapStartSec);
                   }}
-                  title="Übergangsfenster: Ziehen zum freien Verschieben (rastet auf Takte ein) • Rechtsklick für Optionen"
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    onOpenTransitionStudio(trans);
+                  }}
+                  title="Übergangsfenster: Ziehen zum freien Verschieben (rastet auf Takte ein) • Doppelklick zum Vergrößern • Rechtsklick für Optionen"
                 >
                   {/* Left Edge Resize Handle (freely adjusts transition start & length) */}
                   <div
@@ -1257,18 +1258,18 @@ export default function WaveformTimeline({
                         <Activity className="w-2.5 h-2.5 text-cyan-400" />
                       </button>
 
-                      {/* Open Waveform Transition Overlap Studio */}
+                      {/* Open / Maximize Waveform Transition Overlap Studio */}
                       <button
-                        id={`btn-edit-envelope-${trans.id}`}
+                        id={`btn-maximize-transition-${trans.id}`}
                         onClick={(e) => {
                           e.stopPropagation();
                           onOpenTransitionStudio(trans);
                         }}
-                        className="flex items-center gap-0.5 bg-purple-600 hover:bg-purple-500 text-white px-1.5 py-0.5 rounded text-[9px] font-mono font-bold shadow transition-all hover:scale-105 active:scale-95"
-                        title="Waveform Transition Overlap Studio öffnen"
+                        className="flex items-center gap-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white px-2 py-0.5 rounded text-[9px] font-mono font-bold shadow-md transition-all hover:scale-105 active:scale-95 border border-purple-400/40"
+                        title="Übergangsfenster groß machen / Transition Studio öffnen"
                       >
-                        <Sliders className="w-2.5 h-2.5 text-cyan-300" />
-                        <span>Hüllkurven</span>
+                        <Maximize2 className="w-2.5 h-2.5 text-cyan-300" />
+                        <span>Großansicht</span>
                       </button>
                     </div>
                   </div>
