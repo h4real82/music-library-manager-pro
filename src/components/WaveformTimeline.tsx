@@ -141,9 +141,9 @@ const PrecisionTimelineWaveform: React.FC<PrecisionTimelineWaveformProps> = Reac
           </linearGradient>
           <linearGradient id={`tl-kick-${gradKey}`} gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="100">
             <stop offset="0%" stopColor="#ffffff" stopOpacity="1.0" />
-            <stop offset="20%" stopColor="#f59e0b" stopOpacity="1.0" />
-            <stop offset="50%" stopColor="#ef4444" stopOpacity="0.95" />
-            <stop offset="80%" stopColor="#f59e0b" stopOpacity="1.0" />
+            <stop offset="25%" stopColor="#38bdf8" stopOpacity="1.0" />
+            <stop offset="50%" stopColor="#00f5ff" stopOpacity="1.0" />
+            <stop offset="75%" stopColor="#38bdf8" stopOpacity="1.0" />
             <stop offset="100%" stopColor="#ffffff" stopOpacity="1.0" />
           </linearGradient>
         </defs>
@@ -202,19 +202,55 @@ export default function WaveformTimeline({
 
   // Mouse wheel behavior:
   // Over a track: zoom horizontally in/out
-  // Outside a track: scroll timeline vertically
+  // Mouse wheel behavior (DJ.Studio style):
+  // - Over a track: zoom horizontally centered around the mouse cursor (Focal Zoom)
+  // - Shift+Wheel or horizontal scroll: pan horizontally across the timeline
+  // - Outside a track: scroll timeline vertically
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const handleWheel = (e: WheelEvent) => {
+      // 1. Shift key or dominant horizontal delta: Horizontal Panning
+      if (e.shiftKey || (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 2)) {
+        e.preventDefault();
+        container.scrollLeft += (e.deltaX !== 0 ? e.deltaX : e.deltaY);
+        return;
+      }
+
       const target = e.target as HTMLElement | null;
       const isOverTrack = Boolean(target?.closest('[data-track-lane="true"]'));
 
       if (isOverTrack) {
         e.preventDefault();
-        const zoomDelta = e.deltaY < 0 ? 0.15 : -0.15;
-        setZoomLevel(z => Math.max(0.4, Math.min(3.0, Math.round((z + zoomDelta) * 100) / 100)));
+
+        const rect = container.getBoundingClientRect();
+        const mouseViewportX = e.clientX - rect.left;
+        const currentScrollLeft = container.scrollLeft;
+        const contentX = currentScrollLeft + mouseViewportX;
+
+        setZoomLevel(prevZoom => {
+          const basePxPerSec = 3.2;
+          const timeUnderCursor = Math.max(0, (contentX - TIMELINE_HEADER_WIDTH) / (basePxPerSec * prevZoom));
+
+          // Multiplicative zoom step (smooth for both mouse wheel ticks and trackpads)
+          const zoomFactor = Math.exp(-e.deltaY * 0.0022);
+          const nextZoom = Math.max(0.3, Math.min(4.0, Math.round(prevZoom * zoomFactor * 100) / 100));
+
+          if (nextZoom === prevZoom) return prevZoom;
+
+          // Adjust scrollLeft so the time under the cursor remains at the exact same viewport position
+          const nextContentX = TIMELINE_HEADER_WIDTH + (timeUnderCursor * basePxPerSec * nextZoom);
+          const nextScrollLeft = Math.max(0, nextContentX - mouseViewportX);
+
+          requestAnimationFrame(() => {
+            if (containerRef.current) {
+              containerRef.current.scrollLeft = nextScrollLeft;
+            }
+          });
+
+          return nextZoom;
+        });
       }
       // If outside a track lane, do not preventDefault: browser naturally scrolls vertically!
     };
