@@ -163,6 +163,11 @@ Verwalte und kuratiere selbst riesige Musikbibliotheken blitzschnell:
 - **Fokussierte Arbeitsfläche**: Die linke Seitenleiste mit Playlisten, Gruppen und Filtern wird in der *Builder View* und im *Mapper* automatisch ausgeblendet, damit du die volle Bildschirmbreite nutzen kannst.
 
 <div align="center">
+  <img src="docs/screenshots/screenshot_cover_view.png" alt="DJ Cover View mit Album-Artwork" width="90%" />
+  <p><em>Cover View: Große Artwork-Kacheln mit Camelot- und BPM-Badges, Playlisten und Camelot-Rad</em></p>
+</div>
+
+<div align="center">
   <img src="docs/screenshots/screenshot_list_view_separated_sorted.png" alt="DJ List View mit getrennten Spalten" width="90%" />
   <p><em>List View: Sortierbare Spalten für Interpret/Titel, BPM-Sortierung und Camelot-Farben</em></p>
 </div>
