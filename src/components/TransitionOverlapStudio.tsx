@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, MouseEvent } from 'react';
+import React, { useState, useRef, useEffect, useMemo, MouseEvent } from 'react';
 import { Play, Pause, RotateCcw, X, Check, Trash2, Plus, Sliders, Zap, Waves, Scissors, Gauge, Info, Music } from 'lucide-react';
 import { TrackDef, TransitionConfig, TransitionEnvelopes, EnvelopePoint, TransitionPresetType } from '../types';
 import { evaluateKeyCompatibility, calculateTempoSync, generateDefaultEnvelopes, evaluateEnvelope } from '../lib/djMixerLogic';
@@ -27,12 +27,16 @@ export default function TransitionOverlapStudio({
 }: TransitionOverlapStudioProps) {
   const durationBeats = transition.durationBeats || 32;
 
-  // Initialize or generate envelopes
+  // Initialize or generate envelopes safely (guaranteeing all 3 bands are present)
   const [envelopes, setEnvelopes] = useState<TransitionEnvelopes>(() => {
+    const fallback = generateDefaultEnvelopes(transition.preset || 'bass-swap', durationBeats);
     if (transition.envelopes) {
-      return JSON.parse(JSON.stringify(transition.envelopes));
+      return {
+        ...fallback,
+        ...JSON.parse(JSON.stringify(transition.envelopes)),
+      };
     }
-    return generateDefaultEnvelopes(transition.preset || 'bass-swap', durationBeats);
+    return fallback;
   });
 
   const [selectedPreset, setSelectedPreset] = useState<TransitionPresetType>(transition.preset || 'bass-swap');
@@ -422,16 +426,16 @@ export default function TransitionOverlapStudio({
   }, []);
 
   // Compute live preview levels at current audition beat
-  const liveLowA = evaluateEnvelope(envelopes.lowA, auditionBeat);
-  const liveLowB = evaluateEnvelope(envelopes.lowB, auditionBeat);
-  const liveMidA = evaluateEnvelope(envelopes.midA, auditionBeat);
-  const liveMidB = evaluateEnvelope(envelopes.midB, auditionBeat);
-  const liveHighA = evaluateEnvelope(envelopes.highA, auditionBeat);
-  const liveHighB = evaluateEnvelope(envelopes.highB, auditionBeat);
+  const liveLowA = envelopes?.lowA ? evaluateEnvelope(envelopes.lowA, auditionBeat) : 0;
+  const liveLowB = envelopes?.lowB ? evaluateEnvelope(envelopes.lowB, auditionBeat) : 0;
+  const liveMidA = envelopes?.midA ? evaluateEnvelope(envelopes.midA, auditionBeat) : 0;
+  const liveMidB = envelopes?.midB ? evaluateEnvelope(envelopes.midB, auditionBeat) : 0;
+  const liveHighA = envelopes?.highA ? evaluateEnvelope(envelopes.highA, auditionBeat) : 0;
+  const liveHighB = envelopes?.highB ? evaluateEnvelope(envelopes.highB, auditionBeat) : 0;
 
   // SVG Line helper
-  const renderEnvelopePath = (points: EnvelopePoint[], laneIndex: 0 | 1, color: string, isMuted: boolean = false) => {
-    if (points.length < 2) return null;
+  const renderEnvelopePath = (points: EnvelopePoint[] | undefined | null, laneIndex: 0 | 1, color: string, isMuted: boolean = false) => {
+    if (!points || points.length < 2) return null;
     let d = `M ${beatToX(points[0].beat)} ${valToY(points[0].value, laneIndex)}`;
     for (let i = 1; i < points.length; i++) {
       d += ` L ${beatToX(points[i].beat)} ${valToY(points[i].value, laneIndex)}`;
@@ -451,13 +455,14 @@ export default function TransitionOverlapStudio({
 
   // SVG Control Points helper with enlarged 28px tactile grab halo and transform-origin stabilization
   const renderControlPoints = (
-    points: EnvelopePoint[],
+    points: EnvelopePoint[] | undefined | null,
     deck: 'A' | 'B',
     type: 'low' | 'mid' | 'high',
     laneIndex: 0 | 1,
     color: string,
     isDiamond: boolean = false
   ) => {
+    if (!points || points.length === 0) return null;
     return points.map(pt => {
       const cx = beatToX(pt.beat);
       const cy = valToY(pt.value, laneIndex);

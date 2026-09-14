@@ -123,7 +123,7 @@ export function getTrackWaveformSlice(
   // --- MODE 1: Direct Raw PCM AudioBuffer Sampling (Zero Decimation Loss) ---
   // When AudioBuffer is available in memory, calculate the exact physical peak and RMS
   // in the needle's micro-window (~20ms). This guarantees 100% bit-perfect transient accuracy.
-  if (effectiveAudioBuffer && effectiveAudioBuffer.length > 0) {
+  if (effectiveAudioBuffer && effectiveAudioBuffer.length > 0 && typeof effectiveAudioBuffer.getChannelData === 'function') {
     const sr = effectiveAudioBuffer.sampleRate;
     const left = effectiveAudioBuffer.getChannelData(0);
     const right = effectiveAudioBuffer.numberOfChannels > 1 ? effectiveAudioBuffer.getChannelData(1) : left;

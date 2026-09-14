@@ -6,6 +6,7 @@ import { HotCue, TransitionConfig, TransitionPresetType } from '../types';
 import { PRESET_META } from './DjSetPlayer';
 import TransitionOverlapStudio from './TransitionOverlapStudio';
 import WaveformTimeline from './WaveformTimeline';
+import ErrorBoundary from './ErrorBoundary';
 import { generateDefaultEnvelopes } from '../lib/djMixerLogic';
 
 interface GraphMapProps {
@@ -931,23 +932,28 @@ export default function GraphMap({
 
       {/* ================= WAVEFORM TRANSITION OVERLAP STUDIO MODAL ================= */}
       {editingTransition && (
-        <TransitionOverlapStudio
-          transition={editingTransition}
-          sourceTrack={tracks.find(t => t.id === editingTransition.sourceTrackId)}
-          targetTrack={tracks.find(t => t.id === editingTransition.targetTrackId)}
-          onSave={(updated) => {
-            const next = localTransitions.map(t => t.id === updated.id ? updated : t);
-            updateTransitions(next);
-            setEditingTransition(null);
-            if (onSelectTransition) onSelectTransition(updated);
-          }}
-          onClose={() => setEditingTransition(null)}
-          onDelete={(id) => {
-            const next = localTransitions.filter(t => t.id !== id);
-            updateTransitions(next);
-            setEditingTransition(null);
-          }}
-        />
+        <ErrorBoundary
+          fallbackTitle="Fehler beim Laden des Waveform Transition Studios"
+          onReset={() => setEditingTransition(null)}
+        >
+          <TransitionOverlapStudio
+            transition={editingTransition}
+            sourceTrack={tracks.find(t => t.id === editingTransition.sourceTrackId)}
+            targetTrack={tracks.find(t => t.id === editingTransition.targetTrackId)}
+            onSave={(updated) => {
+              const next = localTransitions.map(t => t.id === updated.id ? updated : t);
+              updateTransitions(next);
+              setEditingTransition(null);
+              if (onSelectTransition) onSelectTransition(updated);
+            }}
+            onClose={() => setEditingTransition(null)}
+            onDelete={(id) => {
+              const next = localTransitions.filter(t => t.id !== id);
+              updateTransitions(next);
+              setEditingTransition(null);
+            }}
+          />
+        </ErrorBoundary>
       )}
 
     </div>

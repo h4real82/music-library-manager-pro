@@ -6,6 +6,7 @@ import TrackMapper from './components/TrackMapper';
 import GraphMap from './components/GraphMap';
 import AnalyzerPanel from './components/AnalyzerPanel';
 import TrackAnalysisView from './components/TrackAnalysisView';
+import ErrorBoundary from './components/ErrorBoundary';
 import PlaylistGroups from './components/PlaylistGroups';
 import LibraryManagerModal from './components/LibraryManagerModal';
 import CamelotWheel from './components/CamelotWheel';
@@ -1654,28 +1655,30 @@ export default function App() {
               isPlaying={isPlaying}
             />
           ) : (
-            <GraphMap 
-              tracks={graphDisplayTracks} 
-              libraryTracks={tracks}
-              onAddSuggested={addMultipleToPlaylist}
-              transitions={setTransitions}
-              activeTransitionId={activeTransitionId}
-              onTransitionsChange={handleTransitionsChange}
-              onSelectTransition={(t) => setActiveTransitionId(t.id)}
-              onPlaySegment={(t, startSec) => {
-                setCurrentTrack(t);
-                setJumpToTime(startSec);
-              }} 
-              onAnalyze={(t) => setActiveTrackForAnalysis(t)}
-              currentTime={setPlaybackTime}
-              isPlaying={isSetPlaying}
-              onSeek={handleSetSeek}
-              onTogglePlay={handleSetTogglePlay}
-              onAutomix={handleAutomix}
-              onTrackUpdated={(updated) => updateTrack(updated.id, updated)}
-              onOpenSetExport={() => setIsSetExportModalOpen(true)}
-              onSaveSetAsPlaylist={() => handleSaveSetAsPlaylist(`Set Playlist ${new Date().toLocaleDateString('de-DE')}`)}
-            />
+            <ErrorBoundary fallbackTitle="Fehler in der Graph- & Set-Ansicht">
+              <GraphMap 
+                tracks={graphDisplayTracks} 
+                libraryTracks={tracks}
+                onAddSuggested={addMultipleToPlaylist}
+                transitions={setTransitions}
+                activeTransitionId={activeTransitionId}
+                onTransitionsChange={handleTransitionsChange}
+                onSelectTransition={(t) => setActiveTransitionId(t.id)}
+                onPlaySegment={(t, startSec) => {
+                  setCurrentTrack(t);
+                  setJumpToTime(startSec);
+                }} 
+                onAnalyze={(t) => setActiveTrackForAnalysis(t)}
+                currentTime={setPlaybackTime}
+                isPlaying={isSetPlaying}
+                onSeek={handleSetSeek}
+                onTogglePlay={handleSetTogglePlay}
+                onAutomix={handleAutomix}
+                onTrackUpdated={(updated) => updateTrack(updated.id, updated)}
+                onOpenSetExport={() => setIsSetExportModalOpen(true)}
+                onSaveSetAsPlaylist={() => handleSaveSetAsPlaylist(`Set Playlist ${new Date().toLocaleDateString('de-DE')}`)}
+              />
+            </ErrorBoundary>
           )}
         </div>
       </div>
