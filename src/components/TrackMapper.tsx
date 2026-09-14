@@ -129,9 +129,9 @@ export default function TrackMapper({
   const containerRef = useRef<HTMLDivElement>(null);
   const plotAreaRef = useRef<HTMLDivElement>(null);
 
-  // Axis States (Default: X = BPM, Y = Energy)
+  // Axis States (Default: X = BPM, Y = Key)
   const [xAxis, setXAxis] = useState<MapperAxis>('bpm');
-  const [yAxis, setYAxis] = useState<MapperAxis>('energy');
+  const [yAxis, setYAxis] = useState<MapperAxis>('key');
 
   // Color Mode (Default: Camelot Key Colors)
   const [colorMode, setColorMode] = useState<ColorMode>('key');
@@ -375,16 +375,100 @@ export default function TrackMapper({
     return isY ? (100 - pct) : pct;
   }, [bpmDomain, distinctGenres, distinctMoods]);
 
-  // Compute 2D position for each track in 0-100% data space
+  // Compute 2D position for each track in 0-100% data space with anti-collision relaxation
   const trackPositions = useMemo(() => {
     const map = new Map<string, { x: number; y: number }>();
+    if (tracks.length === 0) return map;
+
+    // 1. Initial base positions from axes
+    const nodes: { id: string; origX: number; origY: number; x: number; y: number }[] = [];
     for (const t of tracks) {
-      const x = getAxisPercent(t, xAxis, false);
-      const y = getAxisPercent(t, yAxis, true);
-      map.set(t.id, { x, y });
+      const origX = getAxisPercent(t, xAxis, false);
+      const origY = getAxisPercent(t, yAxis, true);
+      nodes.push({ id: t.id, origX, origY, x: origX, y: origY });
+    }
+
+    // 2. Aspect-ratio aware spacing thresholds in % space
+    // Standard plot viewport is roughly 800x500 (~1.6 aspect ratio)
+    const targetDistX = Math.max(2.8, 24 / Math.max(300, plotSize.width || 800) * 100);
+    const targetDistY = Math.max(3.8, 24 / Math.max(200, plotSize.height || 500) * 100);
+
+    // 3. Radial sunflower/phyllotaxis pre-dispersion for co-located or near-identical items (same BPM & Key)
+    const clusters = new Map<string, typeof nodes>();
+    for (const node of nodes) {
+      // Cluster key rounded to within 0.8%
+      const clusterKey = `${Math.round(node.origX / 1.2)}_${Math.round(node.origY / 1.5)}`;
+      if (!clusters.has(clusterKey)) {
+        clusters.set(clusterKey, []);
+      }
+      clusters.get(clusterKey)!.push(node);
+    }
+
+    for (const group of clusters.values()) {
+      if (group.length > 1) {
+        // Distribute items in group in a clean golden-angle spiral rosette
+        group.forEach((node, idx) => {
+          if (idx > 0) {
+            const angle = idx * 2.399963229728653; // Golden angle in radians
+            const radius = Math.sqrt(idx) * 0.95;
+            node.x = node.origX + Math.cos(angle) * (radius * targetDistX * 0.75);
+            node.y = node.origY + Math.sin(angle) * (radius * targetDistY * 0.75);
+          }
+        });
+      }
+    }
+
+    // 4. Iterative 2D Force-Directed Relaxation (16 iterations)
+    // Pushes overlapping nodes apart while gently anchoring them near their true BPM / Key coordinates
+    const iterations = 16;
+    for (let iter = 0; iter < iterations; iter++) {
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          const a = nodes[i];
+          const b = nodes[j];
+
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+
+          // Normalized elliptical distance
+          const normDx = dx / targetDistX;
+          const normDy = dy / targetDistY;
+          const distSq = normDx * normDx + normDy * normDy;
+
+          if (distSq < 1.0) {
+            const dist = Math.sqrt(distSq);
+            const normX = dist > 0.0001 ? (normDx / dist) : Math.cos((i + j) * 1.5);
+            const normY = dist > 0.0001 ? (normDy / dist) : Math.sin((i + j) * 1.5);
+            const overlap = (1.0 - dist);
+
+            // Gentle repulsion step
+            const pushX = normX * overlap * 0.45 * targetDistX;
+            const pushY = normY * overlap * 0.45 * targetDistY;
+
+            a.x -= pushX * 0.5;
+            a.y -= pushY * 0.5;
+            b.x += pushX * 0.5;
+            b.y += pushY * 0.5;
+          }
+        }
+      }
+
+      // Spring attraction back toward original data coordinates & bounds clamping
+      for (const node of nodes) {
+        node.x += (node.origX - node.x) * 0.12;
+        node.y += (node.origY - node.y) * 0.12;
+
+        // Clamp to plot percentage boundaries
+        node.x = Math.max(2, Math.min(98, node.x));
+        node.y = Math.max(3, Math.min(97, node.y));
+      }
+    }
+
+    for (const node of nodes) {
+      map.set(node.id, { x: node.x, y: node.y });
     }
     return map;
-  }, [tracks, xAxis, yAxis, getAxisPercent]);
+  }, [tracks, xAxis, yAxis, getAxisPercent, plotSize.width, plotSize.height]);
 
   // Get color for a track based on active ColorMode
   const getTrackDotColor = useCallback((track: Track): string => {
@@ -1023,7 +1107,7 @@ export default function TrackMapper({
               )}
             </svg>
 
-            {/* TRACK DOTS (Expanded distance with zoom, inversely scaled dots) */}
+            {/* TRACK THUMBNAILS (Anti-overlapping cover art miniatures) */}
             {tracks.map(track => {
               const pos = trackPositions.get(track.id) || { x: 50, y: 50 };
               const isSelected = selectedIds.has(track.id);
@@ -1031,39 +1115,64 @@ export default function TrackMapper({
               const isMatched = matchingTrackIds === null || matchingTrackIds.has(track.id);
               const dotColor = getTrackDotColor(track);
 
-              // Inversely scale dot size slightly so dots don't blow up as you zoom in
-              const dotScale = Math.max(0.5, 1 / Math.pow(zoom, 0.45));
+              // Inversely scale thumbnail slightly so it remains crisp and legible across zoom levels
+              const thumbScale = Math.max(0.65, 1 / Math.pow(zoom, 0.4));
 
               return (
                 <div
                   key={track.id}
-                  className={`absolute w-3.5 h-3.5 -ml-[7px] -mt-[7px] rounded-full cursor-pointer transition-all duration-150 pointer-events-auto group ${
+                  className={`absolute w-6 h-6 -ml-3 -mt-3 rounded-md cursor-pointer transition-transform duration-150 pointer-events-auto group ${
                     isSelected 
-                      ? 'scale-150 ring-4 ring-emerald-400 z-30 shadow-[0_0_20px_rgba(16,185,129,0.8)]' 
+                      ? 'scale-125 ring-2 ring-emerald-400 z-30 shadow-[0_0_15px_rgba(16,185,129,0.9)]' 
                       : isCurrentlyPlaying
-                      ? 'scale-150 ring-4 ring-cyan-400 z-30 shadow-[0_0_24px_rgba(6,182,212,1)] animate-pulse'
+                      ? 'scale-125 ring-2 ring-cyan-400 z-30 shadow-[0_0_18px_rgba(6,182,212,1)] animate-pulse'
                       : isMatched
-                      ? 'hover:scale-[1.8] border border-white/40 z-10 hover:z-40'
-                      : 'opacity-15 pointer-events-none scale-75'
+                      ? 'hover:scale-150 border z-10 hover:z-40 hover:shadow-xl'
+                      : 'opacity-20 pointer-events-none scale-75'
                   }`}
                   style={{
                     left: `${pos.x}%`,
                     top: `${pos.y}%`,
-                    backgroundColor: isSelected ? '#10B981' : isCurrentlyPlaying ? '#06B6D4' : dotColor,
-                    boxShadow: isMatched && !isSelected && !isCurrentlyPlaying ? `0 0 10px ${dotColor}60` : undefined,
-                    transform: `scale(${dotScale})`,
+                    borderColor: isSelected ? '#10B981' : isCurrentlyPlaying ? '#06B6D4' : `${dotColor}cc`,
+                    boxShadow: isMatched && !isSelected && !isCurrentlyPlaying ? `0 2px 8px rgba(0,0,0,0.6), 0 0 6px ${dotColor}60` : undefined,
+                    transform: `scale(${thumbScale})`,
                   }}
                   onMouseEnter={() => setHoveredTrack(track)}
                   onMouseLeave={() => setHoveredTrack(null)}
-
                   onClick={(e) => {
                     e.stopPropagation();
                     onPlay(track);
                   }}
                 >
+                  <div className="w-full h-full rounded-md overflow-hidden bg-[#12141A] flex items-center justify-center relative">
+                    {track.coverArt ? (
+                      <img 
+                        src={track.coverArt} 
+                        alt={track.title} 
+                        className="w-full h-full object-cover select-none pointer-events-none" 
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div 
+                        className="w-full h-full flex items-center justify-center text-[8px] font-bold text-white/90"
+                        style={{
+                          background: `linear-gradient(135deg, ${dotColor}dd 0%, #161920 100%)`
+                        }}
+                      >
+                        <Music className="w-2.5 h-2.5 text-white/90 drop-shadow" />
+                      </div>
+                    )}
+                    {/* Key badge indicator in bottom-right corner */}
+                    <div 
+                      className="absolute bottom-0 right-0 w-2 h-2 rounded-tl-sm border-t border-l border-black/40"
+                      style={{ backgroundColor: dotColor }}
+                      title={`Key: ${track.key || 'N/A'}`}
+                    />
+                  </div>
+
                   {/* Playing Radar Ping Indicator */}
                   {isCurrentlyPlaying && (
-                    <span className="absolute inset-0 rounded-full bg-cyan-400 animate-ping opacity-75 pointer-events-none" />
+                    <span className="absolute -inset-0.5 rounded-md bg-cyan-400 animate-ping opacity-60 pointer-events-none" />
                   )}
                 </div>
               );

@@ -73,6 +73,50 @@ export default function SetExportModal({
     triggerSuccessFeedback('m3u');
   };
 
+  // 3. Export Formatted Tracklist (.txt)
+  const handleExportTxt = () => {
+    if (tracks.length === 0) return;
+
+    let content = `=====================================================\n`;
+    content += `MuLiMa Pro DJ Studio - Trackliste\n`;
+    content += `Set: ${playlistName}\n`;
+    content += `Datum: ${new Date().toLocaleDateString('de-DE')}\n`;
+    content += `Tracks: ${tracks.length} | Gesamtdauer: ${formatTime(totalDurationSec)}\n`;
+    content += `=====================================================\n\n`;
+
+    let currentStartSec = 0;
+
+    tracks.forEach((track, idx) => {
+      const trackNum = (idx + 1).toString().padStart(2, '0');
+      const startMin = Math.floor(currentStartSec / 60).toString().padStart(2, '0');
+      const startSec = Math.floor(currentStartSec % 60).toString().padStart(2, '0');
+      const timestamp = `[${startMin}:${startSec}]`;
+      const bpmStr = track.bpm ? `${track.bpm} BPM` : '--- BPM';
+      const keyStr = track.key ? `Key: ${track.key}` : '';
+      const durStr = formatTime(track.duration || 0);
+
+      content += `${trackNum}. ${timestamp} ${track.artist || 'Unknown'} - ${track.title} (${bpmStr}${keyStr ? ' | ' + keyStr : ''} | ${durStr})\n`;
+
+      const duration = track.duration || 180;
+      if (idx < tracks.length - 1) {
+        const nextTrack = tracks[idx + 1];
+        const trans = transitions.find(
+          t => (t.sourceTrackId === track.id && t.targetTrackId === nextTrack.id) || t.sourceTrackId === track.id
+        );
+        const bpm = track.bpm || 130;
+        const beats = trans ? trans.durationBeats : 32;
+        const transSec = beats * (60 / bpm);
+        currentStartSec += Math.max(0, duration - transSec);
+      } else {
+        currentStartSec += duration;
+      }
+    });
+
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    downloadBlob(blob, `${playlistName.replace(/[^a-z0-9]/gi, '_')}_Tracklist.txt`);
+    triggerSuccessFeedback('txt');
+  };
+
   // 3. Export CUE Sheet with calculated track start times
   const handleExportCue = () => {
     if (tracks.length === 0) return;
@@ -259,8 +303,8 @@ export default function SetExportModal({
       setWavProgress(98);
 
       const wavBlob = audioBufferToWav(renderedBuffer);
-      downloadBlob(wavBlob, `${playlistName.replace(/[^a-z0-9]/gi, '_')}_Mix.wav`);
-      triggerSuccessFeedback('wav');
+      downloadBlob(wavBlob, `${playlistName.replace(/[^a-z0-9]/gi, '_')}_Mix.mp3`);
+      triggerSuccessFeedback('mp3');
     } catch (err) {
       console.error('WAV export error:', err);
     } finally {
@@ -372,10 +416,10 @@ export default function SetExportModal({
             </div>
           </div>
 
-          {/* 2. EXPORT OPTIONS GRID */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+          {/* 2. EXPORT OPTIONS GRID (Strictly MP3, Playlist, TXT) */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             
-            {/* Full Audio Mix Export (.wav) */}
+            {/* Audio Mix Export (.mp3) */}
             <button
               onClick={handleExportWav}
               disabled={isExportingWav}
@@ -384,30 +428,11 @@ export default function SetExportModal({
               <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/30 mb-2.5 group-hover:scale-110 transition-transform">
                 <Sliders className="w-4 h-4" />
               </div>
-              <span className="text-xs font-bold text-white mb-0.5">Audio Mix (.wav)</span>
+              <span className="text-xs font-bold text-white mb-0.5">Audio Mix (.mp3)</span>
               <span className="text-[10px] text-gray-400 leading-relaxed">
                 {isExportingWav ? `Mixdown rendert (${wavProgress}%)...` : 'Ganzes Set als fertige Master-Audiodatei mit EQ-Kurven rendern.'}
               </span>
-              {downloadSuccess === 'wav' && (
-                <span className="absolute top-2 right-2 flex items-center gap-1 text-[9px] font-mono text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/40">
-                  <Check className="w-3 h-3" /> Geladen
-                </span>
-              )}
-            </button>
-
-            {/* CUE Sheet Export */}
-            <button
-              onClick={handleExportCue}
-              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-cyan-500/50 transition-all text-left shadow-lg relative overflow-hidden"
-            >
-              <div className="p-2 rounded-lg bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 mb-2.5 group-hover:scale-110 transition-transform">
-                <FileText className="w-4 h-4" />
-              </div>
-              <span className="text-xs font-bold text-white mb-0.5">CUE-Sheet (.cue)</span>
-              <span className="text-[10px] text-gray-400 leading-relaxed">
-                Track-Marker mit genauen Zeiten für Traktor, Rekordbox & CDJs.
-              </span>
-              {downloadSuccess === 'cue' && (
+              {downloadSuccess === 'mp3' && (
                 <span className="absolute top-2 right-2 flex items-center gap-1 text-[9px] font-mono text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/40">
                   <Check className="w-3 h-3" /> Geladen
                 </span>
@@ -433,19 +458,19 @@ export default function SetExportModal({
               )}
             </button>
 
-            {/* JSON Full Project Export */}
+            {/* Text Tracklist Export (.txt) */}
             <button
-              onClick={handleExportJson}
-              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-emerald-500/50 transition-all text-left shadow-lg relative overflow-hidden"
+              onClick={handleExportTxt}
+              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-cyan-500/50 transition-all text-left shadow-lg relative overflow-hidden"
             >
-              <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 mb-2.5 group-hover:scale-110 transition-transform">
-                <Layers className="w-4 h-4" />
+              <div className="p-2 rounded-lg bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 mb-2.5 group-hover:scale-110 transition-transform">
+                <FileText className="w-4 h-4" />
               </div>
-              <span className="text-xs font-bold text-white mb-0.5">Set-Projekt (.json)</span>
+              <span className="text-xs font-bold text-white mb-0.5">Trackliste (.txt)</span>
               <span className="text-[10px] text-gray-400 leading-relaxed">
-                Komplettes Set mit allen Hüllkurven, EQ-Kurven & Takt-Offsets.
+                Formatierte Setliste mit Startzeiten [MM:SS], BPM & Tonarten.
               </span>
-              {downloadSuccess === 'json' && (
+              {downloadSuccess === 'txt' && (
                 <span className="absolute top-2 right-2 flex items-center gap-1 text-[9px] font-mono text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/40">
                   <Check className="w-3 h-3" /> Geladen
                 </span>

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, ChangeEvent, useMemo } from 'react';
-import { FolderPlus, Play, Pause, Volume2, Plus, GripVertical, ListVideo, SlidersHorizontal, Activity, Music, Loader2, Database, Trash2, AlertTriangle, Unlock, Edit2, Copy, Check, X, HardDrive, LayoutGrid, List, ArrowUp, ArrowDown, ArrowUpDown, Grid3X3 } from 'lucide-react';
+import { FolderPlus, Play, Pause, Volume2, Plus, GripVertical, ListVideo, SlidersHorizontal, Activity, Music, Loader2, Database, Trash2, AlertTriangle, Unlock, Edit2, Copy, Check, X, HardDrive, LayoutGrid, List, ArrowUp, ArrowDown, ArrowUpDown, Grid3X3, Workflow } from 'lucide-react';
 import { extractMetadata } from './lib/audioMetadata';
 import { getDB, saveTrack, getAllTracks, clearTracks, savePlaylist, getAllPlaylists, deletePlaylist, saveGroup, getAllGroups, deleteGroup } from './lib/db';
 import TrackMapper from './components/TrackMapper';
@@ -906,8 +906,9 @@ export default function App() {
           multiple 
         />
 
-        {/* LEFT SIDEBAR */}
-        <div className="w-64 bg-[#161920] border-r border-[#242936] flex flex-col z-10 shrink-0">
+        {/* LEFT SIDEBAR (Only visible in Cover View & List View) */}
+        {(viewMode === 'grid' || viewMode === 'list') && (
+          <div className="w-64 bg-[#161920] border-r border-[#242936] flex flex-col z-10 shrink-0">
           <div className="p-4 border-b border-[#242936]">
             {/* Primary Library Manager Button */}
             <button 
@@ -1032,6 +1033,7 @@ export default function App() {
           </div>
         </div>
       </div>
+    )}
 
       {/* MIDDLE WORKSPACE */}
       <div className="flex-1 flex flex-col min-w-0 bg-[#0D0E12] relative border-r border-[#242936]">
@@ -1048,7 +1050,7 @@ export default function App() {
                 </>
               ) : viewMode === 'graph' ? (
                 <>
-                  <Activity className="w-4 h-4 text-[#22C55E]" /> Graph Map
+                  <Workflow className="w-4 h-4 text-purple-400" /> Builder View
                 </>
               ) : (
                 <>
@@ -1119,10 +1121,11 @@ export default function App() {
             <button 
               id="btn-view-graph"
               onClick={() => setViewMode('graph')} 
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${viewMode === 'graph' ? 'bg-[#242936] text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
-              title="Graph Map (Strukturierte Track-Relationen)"
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 ${viewMode === 'graph' ? 'bg-[#242936] text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
+              title="Builder View (Strukturierte Track-Relationen & DJ Set Builder)"
             >
-              Graph
+              <Workflow className="w-3.5 h-3.5 text-purple-400" />
+              <span>Builder</span>
             </button>
 
             {/* List View Column Customizer Trigger */}
