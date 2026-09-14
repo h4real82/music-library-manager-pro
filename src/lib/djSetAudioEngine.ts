@@ -471,14 +471,19 @@ export class DjSetAudioEngine {
       }
 
       const startSec = accumulatedTime;
-      const endSec = startSec + (duration - incomingTargetTimeSec);
+      const naturalEndSec = startSec + (duration - incomingTargetTimeSec);
 
       const mixoutSec = trans?.sourceTimeSec !== undefined
         ? trans.sourceTimeSec
         : Math.max(0, duration - transDurationSec);
       // sourceTimeSec is relative to track-local time, convert to set-time
-      const transStartSec = nextTrack ? startSec + (mixoutSec - incomingTargetTimeSec) : undefined;
+      const transStartSec = nextTrack ? startSec + Math.max(0, mixoutSec - incomingTargetTimeSec) : undefined;
       const transEndSec = nextTrack && transStartSec !== undefined ? transStartSec + transDurationSec : undefined;
+
+      // When there is an outgoing transition, this track's role on the set timeline ends at transEndSec.
+      // Keeping endSec at the raw audio duration would falsely retain this track as active
+      // after the transition ends, resetting it to solo mode and blasting volume!
+      const endSec = (nextTrack && transEndSec !== undefined) ? transEndSec : naturalEndSec;
 
       // Deck assignment: even index → A, odd index → B
       const deck: 'A' | 'B' = (i % 2 === 0) ? 'A' : 'B';
@@ -706,21 +711,31 @@ export class DjSetAudioEngine {
       const ramp = 0.02;
 
       // Physical Deck B gets the "outgoing" (deckA) parameters
-      if (this.gainB) this.gainB.gain.setTargetAtTime(state.deckA.volume, now, ramp);
-      if (this.lowB) this.lowB.gain.setTargetAtTime(state.deckA.eqLow > 0.01 ? 20 * Math.log10(state.deckA.eqLow) : -40, now, ramp);
-      if (this.midB) this.midB.gain.setTargetAtTime(state.deckA.eqMid > 0.01 ? 20 * Math.log10(state.deckA.eqMid) : -40, now, ramp);
-      if (this.highB) this.highB.gain.setTargetAtTime(state.deckA.eqHigh > 0.01 ? 20 * Math.log10(state.deckA.eqHigh) : -40, now, ramp);
+      const effectiveVolOut = (state.deckA.eqLow <= 0.01 && state.deckA.eqMid <= 0.01 && state.deckA.eqHigh <= 0.01)
+        ? 0
+        : state.deckA.volume;
+
+      if (this.gainB) this.gainB.gain.setTargetAtTime(effectiveVolOut, now, ramp);
+      if (this.lowB) this.lowB.gain.setTargetAtTime(state.deckA.eqLow > 0.005 ? 20 * Math.log10(state.deckA.eqLow) : -70, now, ramp);
+      if (this.midB) this.midB.gain.setTargetAtTime(state.deckA.eqMid > 0.005 ? 20 * Math.log10(state.deckA.eqMid) : -70, now, ramp);
+      if (this.highB) this.highB.gain.setTargetAtTime(state.deckA.eqHigh > 0.005 ? 20 * Math.log10(state.deckA.eqHigh) : -70, now, ramp);
       if (this.filterB) {
+        this.filterB.type = state.deckA.filterType || 'highpass';
         this.filterB.frequency.setTargetAtTime(state.deckA.filterCutoff, now, ramp);
         this.filterB.Q.setTargetAtTime(state.deckA.filterQ, now, ramp);
       }
 
       // Physical Deck A gets the "incoming" (deckB) parameters
-      if (this.gainA) this.gainA.gain.setTargetAtTime(state.deckB.volume, now, ramp);
-      if (this.lowA) this.lowA.gain.setTargetAtTime(state.deckB.eqLow > 0.01 ? 20 * Math.log10(state.deckB.eqLow) : -40, now, ramp);
-      if (this.midA) this.midA.gain.setTargetAtTime(state.deckB.eqMid > 0.01 ? 20 * Math.log10(state.deckB.eqMid) : -40, now, ramp);
-      if (this.highA) this.highA.gain.setTargetAtTime(state.deckB.eqHigh > 0.01 ? 20 * Math.log10(state.deckB.eqHigh) : -40, now, ramp);
+      const effectiveVolIn = (state.deckB.eqLow <= 0.01 && state.deckB.eqMid <= 0.01 && state.deckB.eqHigh <= 0.01)
+        ? 0
+        : state.deckB.volume;
+
+      if (this.gainA) this.gainA.gain.setTargetAtTime(effectiveVolIn, now, ramp);
+      if (this.lowA) this.lowA.gain.setTargetAtTime(state.deckB.eqLow > 0.005 ? 20 * Math.log10(state.deckB.eqLow) : -70, now, ramp);
+      if (this.midA) this.midA.gain.setTargetAtTime(state.deckB.eqMid > 0.005 ? 20 * Math.log10(state.deckB.eqMid) : -70, now, ramp);
+      if (this.highA) this.highA.gain.setTargetAtTime(state.deckB.eqHigh > 0.005 ? 20 * Math.log10(state.deckB.eqHigh) : -70, now, ramp);
       if (this.filterA) {
+        this.filterA.type = state.deckB.filterType || 'lowpass';
         this.filterA.frequency.setTargetAtTime(state.deckB.filterCutoff, now, ramp);
         this.filterA.Q.setTargetAtTime(state.deckB.filterQ, now, ramp);
       }
@@ -829,8 +844,17 @@ export class DjSetAudioEngine {
       midB = evaluateEnvelope(customEnvelopes.midB, currentBeat);
       highA = evaluateEnvelope(customEnvelopes.highA, currentBeat);
       highB = evaluateEnvelope(customEnvelopes.highB, currentBeat);
-      volA = evaluateEnvelope(customEnvelopes.volumeA, currentBeat);
-      volB = evaluateEnvelope(customEnvelopes.volumeB, currentBeat);
+
+      const hasCustomVolA = customEnvelopes.volumeA && customEnvelopes.volumeA.length > 0;
+      const hasCustomVolB = customEnvelopes.volumeB && customEnvelopes.volumeB.length > 0;
+
+      volA = hasCustomVolA
+        ? evaluateEnvelope(customEnvelopes.volumeA!, currentBeat)
+        : Math.min(1.0, Math.max(lowA, midA, highA));
+
+      volB = hasCustomVolB
+        ? evaluateEnvelope(customEnvelopes.volumeB!, currentBeat)
+        : Math.min(1.0, Math.max(lowB, midB, highB));
 
       isBassSwapped = lowB > lowA;
       if (p < 0.05) {
@@ -988,6 +1012,16 @@ export class DjSetAudioEngine {
     }
     }
 
+    // Global EQ Killswitch:
+    // When low, mid, and high EQ bands are zeroed (<= 0.01), force volume to 0.0
+    // so no sound leaks through the Biquad filter pass-bands.
+    if (lowA <= 0.01 && midA <= 0.01 && highA <= 0.01) {
+      volA = 0.0;
+    }
+    if (lowB <= 0.01 && midB <= 0.01 && highB <= 0.01) {
+      volB = 0.0;
+    }
+
     return {
       progress: p,
       phaseLabel,
@@ -1024,43 +1058,53 @@ export class DjSetAudioEngine {
     const ramp = 0.02; // 20ms anti-pop ramp
 
     // Deck A DSP
+    const effectiveVolA = (state.deckA.eqLow <= 0.01 && state.deckA.eqMid <= 0.01 && state.deckA.eqHigh <= 0.01)
+      ? 0
+      : state.deckA.volume;
+
     if (this.gainA) {
-      this.gainA.gain.setTargetAtTime(state.deckA.volume, now, ramp);
+      this.gainA.gain.setTargetAtTime(effectiveVolA, now, ramp);
     }
     if (this.lowA) {
-      const db = state.deckA.eqLow > 0.01 ? 20 * Math.log10(state.deckA.eqLow) : -40;
+      const db = state.deckA.eqLow > 0.005 ? 20 * Math.log10(state.deckA.eqLow) : -70;
       this.lowA.gain.setTargetAtTime(db, now, ramp);
     }
     if (this.midA) {
-      const db = state.deckA.eqMid > 0.01 ? 20 * Math.log10(state.deckA.eqMid) : -40;
+      const db = state.deckA.eqMid > 0.005 ? 20 * Math.log10(state.deckA.eqMid) : -70;
       this.midA.gain.setTargetAtTime(db, now, ramp);
     }
     if (this.highA) {
-      const db = state.deckA.eqHigh > 0.01 ? 20 * Math.log10(state.deckA.eqHigh) : -40;
+      const db = state.deckA.eqHigh > 0.005 ? 20 * Math.log10(state.deckA.eqHigh) : -70;
       this.highA.gain.setTargetAtTime(db, now, ramp);
     }
     if (this.filterA) {
+      this.filterA.type = state.deckA.filterType || 'highpass';
       this.filterA.frequency.setTargetAtTime(state.deckA.filterCutoff, now, ramp);
       this.filterA.Q.setTargetAtTime(state.deckA.filterQ, now, ramp);
     }
 
     // Deck B DSP
+    const effectiveVolB = (state.deckB.eqLow <= 0.01 && state.deckB.eqMid <= 0.01 && state.deckB.eqHigh <= 0.01)
+      ? 0
+      : state.deckB.volume;
+
     if (this.gainB) {
-      this.gainB.gain.setTargetAtTime(state.deckB.volume, now, ramp);
+      this.gainB.gain.setTargetAtTime(effectiveVolB, now, ramp);
     }
     if (this.lowB) {
-      const db = state.deckB.eqLow > 0.01 ? 20 * Math.log10(state.deckB.eqLow) : -40;
+      const db = state.deckB.eqLow > 0.005 ? 20 * Math.log10(state.deckB.eqLow) : -70;
       this.lowB.gain.setTargetAtTime(db, now, ramp);
     }
     if (this.midB) {
-      const db = state.deckB.eqMid > 0.01 ? 20 * Math.log10(state.deckB.eqMid) : -40;
+      const db = state.deckB.eqMid > 0.005 ? 20 * Math.log10(state.deckB.eqMid) : -70;
       this.midB.gain.setTargetAtTime(db, now, ramp);
     }
     if (this.highB) {
-      const db = state.deckB.eqHigh > 0.01 ? 20 * Math.log10(state.deckB.eqHigh) : -40;
+      const db = state.deckB.eqHigh > 0.005 ? 20 * Math.log10(state.deckB.eqHigh) : -70;
       this.highB.gain.setTargetAtTime(db, now, ramp);
     }
     if (this.filterB) {
+      this.filterB.type = state.deckB.filterType || 'lowpass';
       this.filterB.frequency.setTargetAtTime(state.deckB.filterCutoff, now, ramp);
       this.filterB.Q.setTargetAtTime(state.deckB.filterQ, now, ramp);
     }

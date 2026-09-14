@@ -14,6 +14,12 @@ import {
   Clock 
 } from 'lucide-react';
 import { TrackDef, TransitionConfig } from '../types';
+import { 
+  downloadBlob, 
+  audioBufferToWav, 
+  audioBufferToMp3, 
+  sanitizeFilename 
+} from '../lib/audioExport';
 
 interface SetExportModalProps {
   isOpen: boolean;
@@ -39,8 +45,10 @@ export default function SetExportModal({
   );
   const [isSavedPlaylist, setIsSavedPlaylist] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState<string | null>(null);
-  const [isExportingWav, setIsExportingWav] = useState(false);
-  const [wavProgress, setWavProgress] = useState(0);
+  const [isExportingAudio, setIsExportingAudio] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'mp3' | 'wav'>('mp3');
+  const [exportProgress, setExportProgress] = useState(0);
+  const [exportStatusText, setExportStatusText] = useState('');
 
   if (!isOpen) return null;
 
@@ -99,7 +107,8 @@ export default function SetExportModal({
     });
 
     const blob = new Blob([content], { type: 'audio/x-mpegurl;charset=utf-8' });
-    downloadBlob(blob, `${playlistName.replace(/[^a-z0-9]/gi, '_')}.m3u8`);
+    const safeName = sanitizeFilename(playlistName, 'DJ_Set');
+    downloadBlob(blob, `${safeName}.m3u8`);
     triggerSuccessFeedback('m3u');
   };
 
@@ -128,7 +137,8 @@ export default function SetExportModal({
     });
 
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    downloadBlob(blob, `${playlistName.replace(/[^a-z0-9]/gi, '_')}_Tracklist.txt`);
+    const safeName = sanitizeFilename(playlistName, 'DJ_Set');
+    downloadBlob(blob, `${safeName}_Tracklist.txt`);
     triggerSuccessFeedback('txt');
   };
 
@@ -155,7 +165,8 @@ export default function SetExportModal({
     });
 
     const blob = new Blob([content], { type: 'application/x-cue;charset=utf-8' });
-    downloadBlob(blob, `${playlistName.replace(/[^a-z0-9]/gi, '_')}.cue`);
+    const safeName = sanitizeFilename(playlistName, 'DJ_Set');
+    downloadBlob(blob, `${safeName}.cue`);
     triggerSuccessFeedback('cue');
   };
 
@@ -170,68 +181,18 @@ export default function SetExportModal({
     };
     const jsonStr = JSON.stringify(project, null, 2);
     const blob = new Blob([jsonStr], { type: 'application/json' });
-    downloadBlob(blob, `${playlistName.replace(/[^a-z0-9]/gi, '_')}.mulimaset.json`);
+    const safeName = sanitizeFilename(playlistName, 'DJ_Set');
+    downloadBlob(blob, `${safeName}.mulimaset.json`);
     triggerSuccessFeedback('json');
   };
 
-  // Helper to encode AudioBuffer to 16-bit PCM WAV Blob
-  const audioBufferToWav = (buffer: AudioBuffer): Blob => {
-    const numChannels = buffer.numberOfChannels;
-    const sampleRate = buffer.sampleRate;
-    const bitDepth = 16;
-    const bytesPerSample = bitDepth / 8;
-    const blockAlign = numChannels * bytesPerSample;
-    const numSamples = buffer.length;
-    const dataByteCount = numSamples * blockAlign;
-    const headerByteCount = 44;
-    const totalByteCount = headerByteCount + dataByteCount;
-
-    const arrayBuffer = new ArrayBuffer(totalByteCount);
-    const view = new DataView(arrayBuffer);
-
-    const writeStr = (offset: number, str: string) => {
-      for (let i = 0; i < str.length; i++) {
-        view.setUint8(offset + i, str.charCodeAt(i));
-      }
-    };
-
-    writeStr(0, 'RIFF');
-    view.setUint32(4, 36 + dataByteCount, true);
-    writeStr(8, 'WAVE');
-    writeStr(12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true); // PCM
-    view.setUint16(22, numChannels, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * blockAlign, true);
-    view.setUint16(32, blockAlign, true);
-    view.setUint16(34, bitDepth, true);
-    writeStr(36, 'data');
-    view.setUint32(40, dataByteCount, true);
-
-    let offset = 44;
-    const channels = [];
-    for (let c = 0; c < numChannels; c++) {
-      channels.push(buffer.getChannelData(c));
-    }
-
-    for (let i = 0; i < numSamples; i++) {
-      for (let c = 0; c < numChannels; c++) {
-        let sample = channels[c][i];
-        sample = Math.max(-1, Math.min(1, sample));
-        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
-        offset += 2;
-      }
-    }
-
-    return new Blob([arrayBuffer], { type: 'audio/wav' });
-  };
-
-  // Full Audio Mix Export using Web Audio OfflineAudioContext with 3-band EQ & Tempo Sync
-  const handleExportWav = async () => {
-    if (tracks.length === 0 || isExportingWav) return;
-    setIsExportingWav(true);
-    setWavProgress(5);
+  // Full Audio Mix Export using Web Audio OfflineAudioContext with 3-band EQ, Filters & Tempo Sync
+  const handleExportAudio = async (format: 'mp3' | 'wav' = 'mp3') => {
+    if (tracks.length === 0 || isExportingAudio) return;
+    setIsExportingAudio(true);
+    setExportFormat(format);
+    setExportProgress(5);
+    setExportStatusText('Timeline-Layout & Startzeiten werden initialisiert...');
 
     try {
       const resolvedStartTimes = getResolvedTrackStartTimes();
@@ -249,10 +210,10 @@ export default function SetExportModal({
       // Find overall set duration (accounting for targetTimeSec offsets)
       let maxEndSec = 0;
       for (let i = 0; i < tracks.length; i++) {
-        const start = resolvedStartTimes[i];
+        const start = resolvedStartTimes[i] || 0;
         const dur = tracks[i].duration || 180;
-        const offset = trackPlayOffsets[i];
-        const effectiveDur = dur - offset; // Track plays from offset to end
+        const offset = trackPlayOffsets[i] || 0;
+        const effectiveDur = Math.max(1, dur - offset); // Track plays from offset to end
         if (start + effectiveDur > maxEndSec) {
           maxEndSec = start + effectiveDur;
         }
@@ -274,7 +235,9 @@ export default function SetExportModal({
         const playOffset = trackPlayOffsets[i]; // Start playing from this point in the audio file
         const effectiveDur = dur - playOffset;  // How long this track actually plays
 
-        setWavProgress(Math.round(10 + (i / tracks.length) * 60));
+        const stepPct = Math.round(5 + (i / tracks.length) * 55);
+        setExportProgress(stepPct);
+        setExportStatusText(`Track ${i + 1}/${tracks.length} (${track.title || 'Audio'}) wird vorbereitet...`);
 
         // Find incoming and outgoing transitions
         const inTrans = i > 0
@@ -557,18 +520,58 @@ export default function SetExportModal({
         }
       }
 
-      setWavProgress(75);
-      const renderedBuffer = await offlineCtx.startRendering();
-      setWavProgress(95);
+      setExportProgress(65);
+      setExportStatusText('Mixdown wird gerendert (EQ-Kurven & Übergänge)...');
 
-      const wavBlob = audioBufferToWav(renderedBuffer);
-      downloadBlob(wavBlob, `${playlistName.replace(/[^a-z0-9]/gi, '_')}_Mix.wav`);
-      triggerSuccessFeedback('mp3');
+      // Ticker to give lively visual progress feedback while Web Audio renders in background
+      const renderTicker = setInterval(() => {
+        setExportProgress(prev => (prev < 80 ? prev + 1 : prev));
+      }, 400);
+
+      let renderedBuffer: AudioBuffer;
+      try {
+        renderedBuffer = await offlineCtx.startRendering();
+      } finally {
+        clearInterval(renderTicker);
+      }
+
+      const safeName = sanitizeFilename(playlistName, 'DJ_Set');
+
+      if (format === 'mp3') {
+        setExportProgress(82);
+        setExportStatusText('MP3-Encoding (320 kbps High Quality)...');
+
+        const mp3Blob = await audioBufferToMp3(renderedBuffer, {
+          bitrate: 320,
+          onProgress: (pct) => {
+            const scaled = Math.round(82 + (pct / 100) * 16);
+            setExportProgress(scaled);
+            setExportStatusText(`MP3-Encoding (320 kbps)... ${pct}%`);
+          },
+        });
+
+        setExportProgress(100);
+        setExportStatusText('Fertig! MP3-Download wird gestartet...');
+        downloadBlob(mp3Blob, `${safeName}_Mix.mp3`);
+        triggerSuccessFeedback('mp3');
+      } else {
+        setExportProgress(88);
+        setExportStatusText('16-Bit Studio Master WAV wird generiert...');
+        const wavBlob = audioBufferToWav(renderedBuffer);
+        setExportProgress(100);
+        setExportStatusText('Fertig! WAV-Download wird gestartet...');
+        downloadBlob(wavBlob, `${safeName}_Mix.wav`);
+        triggerSuccessFeedback('wav');
+      }
     } catch (err) {
       console.error('Master Audio Mix export error:', err);
+      setExportStatusText('Fehler beim Exportieren des Audio-Mixes.');
     } finally {
-      setIsExportingWav(false);
-      setWavProgress(0);
+      setTimeout(() => {
+        setIsExportingAudio(false);
+        setExportProgress(0);
+        setExportStatusText('');
+      }, 2000);
     }
   };
 
@@ -593,17 +596,6 @@ export default function SetExportModal({
     reader.readAsText(file);
   };
 
-  const downloadBlob = (blob: Blob, filename: string) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
   const triggerSuccessFeedback = (type: string) => {
     setDownloadSuccess(type);
     setTimeout(() => setDownloadSuccess(null), 3000);
@@ -611,7 +603,7 @@ export default function SetExportModal({
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 select-none animate-fadeIn">
-      <div className="bg-[#12141A] border border-[#242936] rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden flex flex-col">
+      <div className="bg-[#12141A] border border-[#242936] rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col">
         
         {/* MODAL HEADER */}
         <div className="flex items-center justify-between p-5 border-b border-[#242936] bg-[#161920]">
@@ -675,23 +667,76 @@ export default function SetExportModal({
             </div>
           </div>
 
-          {/* 2. EXPORT OPTIONS GRID (Strictly MP3, Playlist, TXT) */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {/* ACTIVE AUDIO EXPORT PROGRESS BANNER */}
+          {isExportingAudio && (
+            <div className="bg-[#161920] border border-amber-500/40 rounded-xl p-4 flex flex-col gap-2.5 animate-fadeIn shadow-lg">
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2.5 text-amber-400 font-bold">
+                  <div className="w-3.5 h-3.5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+                  <span>{exportStatusText || 'Audio-Export läuft...'}</span>
+                </div>
+                <span className="font-mono font-bold text-amber-300">{exportProgress}%</span>
+              </div>
+              <div className="w-full bg-[#0D0E12] rounded-full h-2 overflow-hidden border border-[#242936]">
+                <div 
+                  className="bg-gradient-to-r from-amber-500 via-orange-500 to-emerald-400 h-full transition-all duration-300 ease-out"
+                  style={{ width: `${exportProgress}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* 2. EXPORT OPTIONS GRID (MP3, WAV, M3U8, TXT) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             
             {/* Audio Mix Export (.mp3) */}
             <button
-              onClick={handleExportWav}
-              disabled={isExportingWav}
+              onClick={() => handleExportAudio('mp3')}
+              disabled={isExportingAudio}
               className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-amber-500/50 transition-all text-left shadow-lg relative overflow-hidden disabled:opacity-50"
             >
-              <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/30 mb-2.5 group-hover:scale-110 transition-transform">
-                <Sliders className="w-4 h-4" />
+              <div className="flex items-center justify-between w-full mb-2.5">
+                <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/30 group-hover:scale-110 transition-transform">
+                  <Sliders className="w-4 h-4" />
+                </div>
+                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-950/70 border border-amber-500/30 text-amber-300 font-bold">
+                  320k MP3
+                </span>
               </div>
               <span className="text-xs font-bold text-white mb-0.5">Audio Mix (.mp3)</span>
               <span className="text-[10px] text-gray-400 leading-relaxed">
-                {isExportingWav ? `Mixdown rendert (${wavProgress}%)...` : 'Ganzes Set als fertige Master-Audiodatei mit EQ-Kurven rendern.'}
+                {isExportingAudio && exportFormat === 'mp3'
+                  ? `Mixdown & MP3 (${exportProgress}%)...`
+                  : 'Ganzes Set als fertige Master-MP3 mit EQ-Kurven & Übergängen.'}
               </span>
               {downloadSuccess === 'mp3' && (
+                <span className="absolute top-2 right-2 flex items-center gap-1 text-[9px] font-mono text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/40">
+                  <Check className="w-3 h-3" /> Geladen
+                </span>
+              )}
+            </button>
+
+            {/* Studio Master Export (.wav) */}
+            <button
+              onClick={() => handleExportAudio('wav')}
+              disabled={isExportingAudio}
+              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-emerald-500/50 transition-all text-left shadow-lg relative overflow-hidden disabled:opacity-50"
+            >
+              <div className="flex items-center justify-between w-full mb-2.5">
+                <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 group-hover:scale-110 transition-transform">
+                  <Layers className="w-4 h-4" />
+                </div>
+                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-950/70 border border-emerald-500/30 text-emerald-300 font-bold">
+                  16-Bit WAV
+                </span>
+              </div>
+              <span className="text-xs font-bold text-white mb-0.5">Studio Master (.wav)</span>
+              <span className="text-[10px] text-gray-400 leading-relaxed">
+                {isExportingAudio && exportFormat === 'wav'
+                  ? `WAV rendert (${exportProgress}%)...`
+                  : 'Verlustfreies 16-Bit / 44.1 kHz PCM Studio Master für höchste Audioqualität.'}
+              </span>
+              {downloadSuccess === 'wav' && (
                 <span className="absolute top-2 right-2 flex items-center gap-1 text-[9px] font-mono text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/40">
                   <Check className="w-3 h-3" /> Geladen
                 </span>

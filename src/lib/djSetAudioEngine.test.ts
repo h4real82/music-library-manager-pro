@@ -502,4 +502,187 @@ describe('DjSetAudioEngine - State Transitions and Logic', () => {
       expect(elements.audioB?.currentTime).toBeDefined();
     });
   });
+
+  describe('Transition Debugging & Mixing Accuracy (Multi-Track & EQ Kill)', () => {
+    it('should kill channel volume completely when all 3 EQ bands (low, mid, high) are 0', () => {
+      const customEnvelopes: TransitionEnvelopes = {
+        lowA: [{ beat: 0, value: 0 }, { beat: 32, value: 0 }],
+        midA: [{ beat: 0, value: 0 }, { beat: 32, value: 0 }],
+        highA: [{ beat: 0, value: 0 }, { beat: 32, value: 0 }],
+        lowB: [{ beat: 0, value: 1 }, { beat: 32, value: 1 }],
+        midB: [{ beat: 0, value: 1 }, { beat: 32, value: 1 }],
+        highB: [{ beat: 0, value: 1 }, { beat: 32, value: 1 }],
+      };
+
+      engine.init();
+      const state = engine.setProgress(0.5, 'bass-swap', customEnvelopes, 32);
+
+      // Deck A EQ bands are zeroed -> volume MUST be forced to 0.0
+      expect(state.deckA.volume).toBe(0);
+      expect(state.deckA.eqLow).toBe(0);
+      expect(state.deckA.eqMid).toBe(0);
+      expect(state.deckA.eqHigh).toBe(0);
+
+      // DSP nodes verification: gainA must be 0 and low/mid/high at -70 dB (kill)
+      const gainA = (engine as any).gainA as MockGainNode;
+      const lowA = (engine as any).lowA as MockBiquadFilterNode;
+      const midA = (engine as any).midA as MockBiquadFilterNode;
+      const highA = (engine as any).highA as MockBiquadFilterNode;
+
+      expect(gainA.gain.value).toBe(0);
+      expect(lowA.gain.value).toBe(-70);
+      expect(midA.gain.value).toBe(-70);
+      expect(highA.gain.value).toBe(-70);
+    });
+
+    it('should smoothly infer deck volume from EQ curves if customEnvelopes lacks volumeA / volumeB', () => {
+      const customEnvelopes: TransitionEnvelopes = {
+        lowA: [{ beat: 0, value: 0.8 }, { beat: 32, value: 0.2 }],
+        midA: [{ beat: 0, value: 0.5 }, { beat: 32, value: 0.1 }],
+        highA: [{ beat: 0, value: 0.4 }, { beat: 32, value: 0.0 }],
+        lowB: [{ beat: 0, value: 0.0 }, { beat: 32, value: 1.0 }],
+        midB: [{ beat: 0, value: 0.2 }, { beat: 32, value: 1.0 }],
+        highB: [{ beat: 0, value: 0.3 }, { beat: 32, value: 1.0 }],
+      };
+
+      // At beat 32 (progress = 1.0): Deck A max(low, mid, high) = 0.2
+      // volumeA should be clamped to 0.2 instead of defaulting to 1.0
+      const state = engine.setProgress(1.0, 'bass-swap', customEnvelopes, 32);
+      expect(state.deckA.volume).toBeCloseTo(0.2);
+    });
+
+    it('should NOT blast Track 1 when seeking past transition end with a long track (fixes 360s timeline bug)', () => {
+      const longTrackA: TrackDef = {
+        ...sampleTrackA,
+        id: 'long-track-a',
+        duration: 360, // 6-minute club track
+        bpm: 120,
+      };
+      const longTrackB: TrackDef = {
+        ...sampleTrackB,
+        id: 'long-track-b',
+        duration: 360,
+        bpm: 120,
+      };
+
+      const trans: TransitionConfig = {
+        id: 'trans-long',
+        sourceTrackId: 'long-track-a',
+        targetTrackId: 'long-track-b',
+        sourceTimeSec: 150, // Mix starts at 150s
+        targetTimeSec: 0,
+        durationBeats: 40,  // 40 beats at 120 BPM = 20s -> transition from 150s to 170s
+        durationSec: 20,
+        preset: 'bass-swap',
+      };
+
+      engine.initSet([longTrackA, longTrackB], [trans], 0);
+
+      // 1. Inside transition: timeSec = 160s
+      engine.seekSet(160);
+      expect((engine as any).currentActiveTrackIndex).toBe(0);
+      expect((engine as any).currentActiveTrackId).toBe('long-track-a');
+      expect((engine as any).currentIncomingTrackId).toBe('long-track-b');
+
+      // 2. Just after transition ends: timeSec = 175s
+      // In the bugged version, Track A was retained because duration 360s > 175s,
+      // which reset Deck A to 100% volume and muted Track B!
+      engine.seekSet(175);
+
+      // Now: Track B (Deck B, index 1) MUST be active in solo mode
+      expect((engine as any).currentActiveTrackIndex).toBe(1);
+      expect((engine as any).currentActiveTrackId).toBe('long-track-b');
+
+      // Deck A (Track 1) must be paused!
+      const elements = engine.getAudioElements();
+      expect(elements.audioA?.paused).toBe(true);
+
+      // Crossfader should be 1 (Deck B solo)
+      expect((engine as any).currentCrossfaderPosition).toBe(1);
+
+      // Gain on Deck B should be 1.0 (unity), Gain on Deck A should be 0.0 (silent)
+      const gainA = (engine as any).gainA as MockGainNode;
+      const gainB = (engine as any).gainB as MockGainNode;
+      expect(gainA.gain.value).toBe(0);
+      expect(gainB.gain.value).toBe(1);
+    });
+
+    it('should correctly alternate decks across 3+ tracks and handle flipped transition filters', () => {
+      const track1: TrackDef = { ...sampleTrackA, id: 'track-1', duration: 240, bpm: 120 };
+      const track2: TrackDef = { ...sampleTrackB, id: 'track-2', duration: 240, bpm: 120 };
+      const track3: TrackDef = { ...sampleTrackA, id: 'track-3', duration: 240, bpm: 120 };
+
+      // Transition 1: Track 1 (Deck A) -> Track 2 (Deck B)
+      // At 120s, 32 beats = 16s -> 120s to 136s
+      const trans1: TransitionConfig = {
+        id: 't-1-2',
+        sourceTrackId: 'track-1',
+        targetTrackId: 'track-2',
+        sourceTimeSec: 120,
+        targetTimeSec: 0,
+        durationBeats: 32,
+        durationSec: 16,
+        preset: 'bass-swap',
+      };
+
+      // Transition 2: Track 2 (Deck B) -> Track 3 (Deck A)
+      // Track 2 starts at 120s. Mix starts at Track 2 time 120s -> Set time = 120 + 120 = 240s
+      // 32 beats = 16s -> 240s to 256s
+      const trans2: TransitionConfig = {
+        id: 't-2-3',
+        sourceTrackId: 'track-2',
+        targetTrackId: 'track-3',
+        sourceTimeSec: 120,
+        targetTimeSec: 0,
+        durationBeats: 32,
+        durationSec: 16,
+        preset: 'filter-sweep',
+      };
+
+      engine.initSet([track1, track2, track3], [trans1, trans2], 0);
+
+      // 1. Phase 1: Track 1 Solo (Set time 50s)
+      engine.seekSet(50);
+      expect((engine as any).currentActiveTrackIndex).toBe(0);
+      expect((engine as any).currentActiveTrackId).toBe('track-1');
+      expect((engine as any).currentDeckBTrack?.id).toBe('track-2'); // Track 2 preloaded on Deck B
+
+      // 2. Phase 2: Transition 1 -> 2 (Set time 128s)
+      engine.seekSet(128);
+      expect((engine as any).currentActiveTrackIndex).toBe(0);
+      expect((engine as any).currentActiveTransitionId).toBe('t-1-2');
+
+      // 3. Phase 3: Track 2 Solo (Set time 180s)
+      engine.seekSet(180);
+      expect((engine as any).currentActiveTrackIndex).toBe(1);
+      expect((engine as any).currentActiveTrackId).toBe('track-2');
+      // Deck A should have preloaded Track 3!
+      expect((engine as any).currentDeckATrack?.id).toBe('track-3');
+      expect((engine as any).audioA?.paused).toBe(true);
+
+      // 4. Phase 4: Flipped Transition 2 -> 3 (Set time 248s)
+      // Deck B is outgoing (Track 2), Deck A is incoming (Track 3)
+      engine.seekSet(248);
+      expect((engine as any).currentActiveTrackIndex).toBe(1);
+      expect((engine as any).currentActiveTransitionId).toBe('t-2-3');
+
+      // Check flipped DSP filters: Deck B should NOT be choked by a 20Hz lowpass filter!
+      const filterB = (engine as any).filterB as MockBiquadFilterNode;
+      const filterA = (engine as any).filterA as MockBiquadFilterNode;
+      expect(filterB.type).toBe('highpass'); // Outgoing Deck B uses highpass
+      expect(filterA.type).toBe('lowpass');  // Incoming Deck A uses lowpass
+
+      // 5. Phase 5: Track 3 Solo (Set time 280s)
+      // After transition 2->3 completes, Track 3 (Deck A) plays solo!
+      engine.seekSet(280);
+      expect((engine as any).currentActiveTrackIndex).toBe(2);
+      expect((engine as any).currentActiveTrackId).toBe('track-3');
+      expect((engine as any).audioB?.paused).toBe(true); // Deck B paused
+      const gainA = (engine as any).gainA as MockGainNode;
+      const gainB = (engine as any).gainB as MockGainNode;
+      expect(gainA.gain.value).toBe(1); // Deck A solo at unity
+      expect(gainB.gain.value).toBe(0); // Deck B muted
+    });
+  });
 });
+
