@@ -31,7 +31,8 @@ describe('getTrackWaveformSlice', () => {
     duration: 180,
     bpm: 128,
     key: '11B',
-    path: '/music/track1.mp3',
+    energy: 8,
+    filePath: '/music/track1.mp3',
     genre: 'Tech House',
   };
 

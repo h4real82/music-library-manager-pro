@@ -1,4 +1,5 @@
 import { EnvelopePoint, TransitionEnvelopes, TransitionPresetType, TrackDef, TransitionConfig } from '../types';
+import { getTrackWaveformSlice } from './waveformGenerator';
 
 export interface KeyCompatibilityResult {
   score: number; // 0 to 100
@@ -704,6 +705,128 @@ export function generateDefaultEnvelopes(preset: TransitionPresetType, durationB
 }
 
 /**
+/**
+ * Analyzes track structure, cues, segments, and waveform energy to spot:
+ * - Breakdown / quiet sections in Track A (ideal for starting an atmospheric or build transition)
+ * - Drop sections in Track B (where the kick/bass explodes after an intro or build-up)
+ */
+export function analyzeTrackStructureForMix(
+  track: TrackDef,
+  bpm: number = 130
+): {
+  breakdownSec?: number;
+  dropSec?: number;
+  hasVocalOrMelodicMid: boolean;
+  outroSec: number;
+} {
+  const duration = track.duration || 180;
+  const beatSec = 60 / (bpm > 0 ? bpm : 130);
+  const barSec = beatSec * 4;
+
+  let breakdownSec: number | undefined;
+  let dropSec: number | undefined;
+
+  // 1. Check explicit Hot Cues
+  if (track.hotCues && track.hotCues.length > 0) {
+    const bCue = track.hotCues.find(c =>
+      c.name && /break|quiet|ambient|bridge|down|solo/i.test(c.name)
+    );
+    if (bCue && bCue.timeMs > 0 && (bCue.timeMs / 1000) > duration * 0.4 && (bCue.timeMs / 1000) < duration - (barSec * 4)) {
+      breakdownSec = Math.floor((bCue.timeMs / 1000) / barSec) * barSec;
+    }
+
+    const dCue = track.hotCues.find(c =>
+      c.name && /drop|kick|bass|main|hook|chorus/i.test(c.name)
+    );
+    if (dCue && dCue.timeMs > 0 && (dCue.timeMs / 1000) < 90) {
+      dropSec = Math.floor((dCue.timeMs / 1000) / barSec) * barSec;
+    }
+  }
+
+  // 2. Check Segments if not found via cues
+  if (track.segments && track.segments.length > 0) {
+    if (!breakdownSec) {
+      const bSeg = track.segments.find(s => {
+        const start = s.startSec ?? (s as any).start ?? 0;
+        const name = s.name ?? (s as any).label ?? '';
+        return start > duration * 0.35 &&
+          start < duration - (barSec * 4) &&
+          (/break|bridge|quiet|ambient|vocal/i.test(name) || (s.energy !== undefined && s.energy <= 4));
+      });
+      if (bSeg) {
+        const start = bSeg.startSec ?? (bSeg as any).start ?? 0;
+        breakdownSec = Math.floor(start / barSec) * barSec;
+      }
+    }
+
+    if (!dropSec) {
+      const dSeg = track.segments.find(s => {
+        const start = s.startSec ?? (s as any).start ?? 0;
+        const name = s.name ?? (s as any).label ?? '';
+        return start >= 4 &&
+          start <= 90 &&
+          (/drop|climax|chorus|verse/i.test(name) || (s.energy !== undefined && s.energy >= 7));
+      });
+      if (dSeg) {
+        const start = dSeg.startSec ?? (dSeg as any).start ?? 0;
+        dropSec = Math.floor(start / barSec) * barSec;
+      }
+    }
+  }
+
+  // 3. Waveform slice spotter (sample in 2-bar steps)
+  if (!dropSec && duration > 30) {
+    // Scan the first 60s for the first major kick/bass jump
+    let initialLowEnergy = 0;
+    let foundDrop: number | undefined;
+
+    const maxScanSec = Math.min(60, duration * 0.4);
+    for (let t = barSec; t < maxScanSec; t += barSec) {
+      const slice = getTrackWaveformSlice(track, t);
+      const isLowSpike = slice.isKick || slice.needleAmp > 0.6;
+      if (t <= barSec * 2) {
+        initialLowEnergy = slice.needleAmp;
+      } else if (isLowSpike && slice.needleAmp > initialLowEnergy + 0.25) {
+        foundDrop = Math.floor(t / barSec) * barSec;
+        break;
+      }
+    }
+    if (foundDrop) dropSec = foundDrop;
+  }
+
+  if (!breakdownSec && duration > 90) {
+    // Scan between 50% and 80% of track for lowest kick/bass valley
+    let minEnergy = 1.0;
+    let minTime: number | undefined;
+
+    for (let t = duration * 0.5; t < duration * 0.8; t += barSec * 2) {
+      const slice = getTrackWaveformSlice(track, t);
+      const avgAmp = (slice.bodyAmp + slice.needleAmp) / 2;
+      if (avgAmp < minEnergy && avgAmp < 0.4) {
+        minEnergy = avgAmp;
+        minTime = Math.floor(t / barSec) * barSec;
+      }
+    }
+    if (minTime) breakdownSec = minTime;
+  }
+
+  // Outro fallback phrase anchor (leave at least 2 bars buffer at track end)
+  const outroSec = Math.max(0, Math.floor((duration - (barSec * 8)) / barSec) * barSec);
+
+  const hasVocalOrMelodicMid = (track.deepAnalysis?.spectral?.spectralCentroidHz !== undefined &&
+    track.deepAnalysis.spectral.spectralCentroidHz > 1200 &&
+    track.deepAnalysis.spectral.spectralCentroidHz < 3500) ||
+    (track.mood?.toLowerCase().includes('vocal') ?? false);
+
+  return {
+    breakdownSec,
+    dropSec,
+    hasVocalOrMelodicMid,
+    outroSec,
+  };
+}
+
+/**
  * DJ.Studio-inspired "Harmonize" Automix Generator
  * Optimizes playlist sequence based on Camelot Wheel harmonic compatibility & BPM,
  * and automatically sets up 32-beat phrase-aligned transitions with 3-band curves.
@@ -798,80 +921,128 @@ export function generateHarmonizedSet(rawTracks: TrackDef[]): {
     const energyB = Number(tgt.energy) || 6;
     const energyDelta = energyB - energyA;
 
-    // A. Select Best Transition Preset & Optimal Beat Length
+    // Analyze structural milestones (breakdowns, drop spikes, quiet parts)
+    const structA = analyzeTrackStructureForMix(src, bpmA);
+    const structB = analyzeTrackStructureForMix(tgt, bpmB);
+
+    const beatSecA = 60 / bpmA;
+    const barSecA = beatSecA * 4;
+    const beatSecB = 60 / bpmB;
+    const barSecB = beatSecB * 4;
+
+    // A. Select Best Transition Preset & Duration using Professional DJ Mix Techniques
     let preset: TransitionPresetType = 'bass-swap';
     let durationBeats: number = 32;
 
     const isHarmonic = keyComp.type === 'perfect' || keyComp.type === 'relative';
-    const isCompatible = keyComp.type === 'compatible' || keyComp.type === 'energy-boost';
+    const isCompatible = isHarmonic || keyComp.type === 'adjacent';
 
-    if (diffBpm > 6) {
-      // Large tempo jump: quick filter-sweep or cut to avoid awkward pitch warp
+    if (energyA <= 4 && energyB <= 4) {
+      // 1. Ambient Slow Crossfade for chill/downtempo
+      preset = 'ambient-fade';
+      durationBeats = (src.duration && src.duration > 240) ? 64 : 48;
+    } else if (diffBpm > 5) {
+      // 2. Filter-Sweep for significant tempo changes or key clashes
       preset = 'filter-sweep';
       durationBeats = 16;
+    } else if (structA.breakdownSec && structB.dropSec && structB.dropSec > 8) {
+      // 3. Breakdown-to-Drop / Stimmung steigern: Layer under breakdown and bass-swap on drop!
+      preset = 'bass-swap';
+      durationBeats = 32;
+    } else if (energyDelta >= 2) {
+      // 4. Energy Build Riser
+      preset = 'reverb-rise';
+      durationBeats = 32;
     } else if (isHarmonic) {
-      // Harmonic match: long, smooth 3-band EQ blend
+      // 5. Long 3-Band EQ Blend for harmonic mixing
       preset = 'eq-blend';
-      durationBeats = (src.duration && src.duration > 210) ? 64 : 32;
-    } else if (isCompatible) {
-      if (energyDelta >= 1) {
-        // Energy increase: punchy bass-swap on the downbeat
-        preset = 'bass-swap';
-        durationBeats = 32;
-      } else {
-        preset = 'eq-blend';
-        durationBeats = 32;
-      }
+      durationBeats = (src.duration && src.duration > 220) ? 64 : 32;
+    } else if (structA.hasVocalOrMelodicMid || structB.hasVocalOrMelodicMid) {
+      // 6. Mid/Vocal Solo Swap to prevent vocal clashing
+      preset = 'vocal-swap';
+      durationBeats = 32;
+    } else if (isCompatible && energyDelta >= 0) {
+      // 7. Classic Punchy Bass-Swap on the 1
+      preset = 'bass-swap';
+      durationBeats = 32;
     } else {
-      // Key clash: high-pass filter sweep drains conflicting low/mid frequencies
+      // 8. Progressive Filter Sweep
       preset = 'filter-sweep';
-      durationBeats = 16;
+      durationBeats = 32;
     }
 
     // B. Calculate Accurate Musical Timing & Cue Points
-    const beatSecA = 60 / bpmA;
-    const barSecA = beatSecA * 4;
     const transDurationSec = durationBeats * beatSecA;
     const trackDurationA = src.duration || 180;
 
-    // Search for explicit Outro / Mix-out HotCue in Track A
+    // Determine mixout timestamp in Track A:
+    // If a breakdown exists and fits, start transition at breakdown, else use outro
+    let sourceTimeSec: number;
     const outroCue = src.hotCues?.find(c => 
       (c.name && /outro|mixout|out|breakdown|end/i.test(c.name)) || c.slot === 8 || c.slot === 7
     );
 
-    let sourceTimeSec: number;
     if (outroCue && (outroCue.timeMs / 1000) >= transDurationSec && (outroCue.timeMs / 1000) <= trackDurationA - barSecA) {
       sourceTimeSec = Math.floor((outroCue.timeMs / 1000) / barSecA) * barSecA;
+    } else if (structA.breakdownSec && structA.breakdownSec + transDurationSec <= trackDurationA - barSecA) {
+      sourceTimeSec = structA.breakdownSec;
     } else {
-      // Align to musical bar phrase before end (leaving 2 bars buffer at track end)
+      // Quantized to 4-beat bar phrase leaving 2 bars buffer at track end
       const rawOutroStart = Math.max(0, trackDurationA - transDurationSec - (barSecA * 2));
       sourceTimeSec = Math.floor(rawOutroStart / barSecA) * barSecA;
     }
 
-    // Search for explicit Intro HotCue in Track B
+    // Determine mixin timestamp in Track B:
+    let targetTimeSec = 0;
     const introCue = tgt.hotCues?.find(c => 
       (c.name && /intro|mixin|in|kick|bass/i.test(c.name)) || c.slot === 1
     );
-    const targetTimeSec = (introCue && introCue.timeMs > 0 && introCue.timeMs < 30000)
-      ? Math.floor((introCue.timeMs / 1000) / (60 / bpmB * 4)) * (60 / bpmB * 4)
-      : 0;
+
+    if (introCue && introCue.timeMs > 0 && introCue.timeMs < 30000) {
+      targetTimeSec = Math.floor((introCue.timeMs / 1000) / barSecB) * barSecB;
+    } else if (structB.dropSec && structB.dropSec >= barSecB && structB.dropSec <= transDurationSec) {
+      // Start at intro beginning so that the drop lands within the transition
+      targetTimeSec = 0;
+    }
+
+    // Generate Envelopes and customize bass swap beat if drop point is known
+    const envelopes = generateDefaultEnvelopes(preset, durationBeats);
+
+    // If bass-swap and Track B's drop is known, time the bass swap exactly to Track B's kick spike!
+    if (preset === 'bass-swap' && structB.dropSec && structB.dropSec > 0) {
+      const dropBeat = Math.max(4, Math.min(durationBeats - 4, Math.round((structB.dropSec - targetTimeSec) / beatSecB)));
+      if (dropBeat > 0 && dropBeat < durationBeats) {
+        envelopes.lowA = [
+          { id: 'la-1', beat: 0, value: 1.0 },
+          { id: 'la-2', beat: dropBeat, value: 1.0 },
+          { id: 'la-3', beat: dropBeat + 0.05, value: 0.0 },
+          { id: 'la-4', beat: durationBeats, value: 0.0 },
+        ];
+        envelopes.lowB = [
+          { id: 'lb-1', beat: 0, value: 0.0 },
+          { id: 'lb-2', beat: dropBeat, value: 0.0 },
+          { id: 'lb-3', beat: dropBeat + 0.05, value: 1.0 },
+          { id: 'lb-4', beat: durationBeats, value: 1.0 },
+        ];
+      }
+    }
 
     transitions.push({
       id: `tr-auto-${src.id}-${tgt.id}`,
       sourceTrackId: src.id,
       sourceSlotId: outroCue ? `slot-${outroCue.slot}-${src.id}` : `slot-outro-${src.id}`,
-      sourceSlotName: outroCue?.name || 'Outro Transition',
+      sourceSlotName: outroCue?.name || (structA.breakdownSec ? 'Breakdown Transition' : 'Outro Transition'),
       sourceSlotNumber: outroCue?.slot || 8,
       sourceTimeSec,
       targetTrackId: tgt.id,
       targetSlotId: introCue ? `slot-${introCue.slot}-${tgt.id}` : `slot-intro-${tgt.id}`,
-      targetSlotName: introCue?.name || 'Intro Cue',
+      targetSlotName: introCue?.name || (structB.dropSec ? 'Drop Transition' : 'Intro Cue'),
       targetSlotNumber: introCue?.slot || 1,
       targetTimeSec,
       durationBeats,
       durationSec: transDurationSec,
       preset,
-      envelopes: generateDefaultEnvelopes(preset, durationBeats),
+      envelopes,
       tempoSync: true,
       bpmA: src.bpm,
       bpmB: tgt.bpm,

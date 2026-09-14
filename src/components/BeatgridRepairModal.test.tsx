@@ -11,6 +11,7 @@ describe('BeatgridRepairModal Performance Waveform & Sync Studio', () => {
     artist: 'Future DJ',
     bpm: 128,
     key: '11A',
+    energy: 7,
     duration: 210,
     beatgridOffsetMs: 45,
   };
@@ -21,6 +22,7 @@ describe('BeatgridRepairModal Performance Waveform & Sync Studio', () => {
     artist: 'Neon Producer',
     bpm: 128,
     key: '12A',
+    energy: 8,
     duration: 195,
     beatgridOffsetMs: 15,
   };

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getCamelotColor, CAMELOT_KEY_COLORS } from './djMixerLogic';
+import { getCamelotColor, CAMELOT_KEY_COLORS, analyzeTrackStructureForMix, generateHarmonizedSet } from './djMixerLogic';
 
 describe('getCamelotColor', () => {
   describe('Standard Camelot Keys', () => {
@@ -72,3 +72,102 @@ describe('getCamelotColor', () => {
     });
   });
 });
+
+describe('analyzeTrackStructureForMix', () => {
+  it('should detect cues, breakdowns and outro positions', () => {
+    const track = {
+      id: 'trk-1',
+      title: 'Deep Groove',
+      artist: 'DJ Antigravity',
+      bpm: 128,
+      key: '8A',
+      duration: 180,
+      hotCues: [
+        { slot: 1, name: 'Intro', timeMs: 0 },
+        { slot: 4, name: 'Main Drop', timeMs: 30000 },
+        { slot: 8, name: 'Outro Mix', timeMs: 150000 },
+      ],
+    };
+
+    const struct = analyzeTrackStructureForMix(track as any, 128);
+    expect(struct.dropSec).toBe(30);
+    expect(struct.outroSec).toBeGreaterThan(120);
+  });
+
+  it('should detect quiet breakdown from segments if available', () => {
+    const track = {
+      id: 'trk-2',
+      title: 'Melodic Journey',
+      artist: 'Artist',
+      bpm: 120,
+      key: '9A',
+      duration: 240,
+      segments: [
+        { id: 's1', name: 'Intro', startSec: 0, endSec: 96, duration: 96, energy: 6, key: '9A', color: '#fff' },
+        { id: 's2', name: 'Breakdown Melody', startSec: 96, endSec: 144, duration: 48, energy: 3, key: '9A', color: '#fff' },
+        { id: 's3', name: 'Drop', startSec: 48, endSec: 96, duration: 48, energy: 9, key: '9A', color: '#fff' },
+      ],
+    };
+
+    const struct = analyzeTrackStructureForMix(track as any, 120);
+    expect(struct.breakdownSec).toBe(96);
+    expect(struct.dropSec).toBe(48);
+  });
+});
+
+describe('generateHarmonizedSet', () => {
+  it('should generate harmonized sequence with diverse transitions, tempoSync, and envelopes', () => {
+    const tracks = [
+      {
+        id: '1',
+        title: 'Track One',
+        artist: 'Artist A',
+        bpm: 126,
+        key: '8A',
+        energy: 5,
+        duration: 200,
+        hotCues: [{ slot: 8, name: 'Outro', timeMs: 160000 }],
+      },
+      {
+        id: '2',
+        title: 'Track Two',
+        artist: 'Artist B',
+        bpm: 128,
+        key: '9A', // Harmonic step +1
+        energy: 7,
+        duration: 220,
+        hotCues: [
+          { slot: 1, name: 'Intro', timeMs: 0 },
+          { slot: 2, name: 'Drop', timeMs: 15000 },
+        ],
+      },
+      {
+        id: '3',
+        title: 'Track Three',
+        artist: 'Artist C',
+        bpm: 124,
+        key: '9B', // Relative major
+        energy: 4,
+        duration: 180,
+      },
+    ];
+
+    const result = generateHarmonizedSet(tracks as any);
+    expect(result.orderedTracks.length).toBe(3);
+    expect(result.transitions.length).toBe(2);
+
+    result.transitions.forEach(tr => {
+      expect(tr.tempoSync).toBe(true);
+      expect(tr.durationSec).toBeGreaterThan(0);
+      expect(tr.envelopes).toBeDefined();
+      expect(tr.envelopes.volumeA.length).toBeGreaterThan(0);
+      expect(tr.envelopes.volumeB.length).toBeGreaterThan(0);
+    });
+
+    // Check that first transition has targetBpm and pitchShiftPercent defined
+    const tr1 = result.transitions[0];
+    expect(tr1.targetBpm).toBeDefined();
+    expect(tr1.pitchShiftPercent).toBeDefined();
+  });
+});
+

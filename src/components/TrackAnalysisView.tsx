@@ -1291,14 +1291,16 @@ export default function TrackAnalysisView({
     if (!nextSlot) return;
 
     const colors = ['#EF4444', '#F97316', '#FBBF24', '#22C55E', '#06B6D4', '#3B82F6', '#8B5CF6', '#EC4899'];
+    const slotNum = parseInt(nextSlot, 10);
     const newCue: HotCue = {
       id: `cue-${Date.now()}`,
       name: `Cue ${nextSlot}`,
-      slot: nextSlot,
-      timeSec: Math.round(timeSec * 1000) / 1000,
-      color: colors[(parseInt(nextSlot, 10) - 1) % colors.length],
+      slot: slotNum,
+      type: 1,
+      timeMs: Math.round(timeSec * 1000),
+      color: colors[(slotNum - 1) % colors.length],
     };
-    const updated = [...hotCues, newCue].sort((a, b) => a.timeSec - b.timeSec);
+    const updated = [...hotCues, newCue].sort((a, b) => a.timeMs - b.timeMs);
     setHotCues(updated);
     onUpdateTrack(track.filePath || track.id, { hotCues: updated });
   };
@@ -1346,7 +1348,7 @@ export default function TrackAnalysisView({
           icon: Play,
           onClick: () => {
             handleSeek(targetSec);
-            if (!isPlaying) togglePlay();
+            if (!isPlaying) handleTogglePlay();
           },
         },
         'divider',

@@ -13,8 +13,9 @@ describe('GraphMap and TransitionOverlapStudio Node Connection', () => {
     artist: 'Artist 1',
     bpm: 124,
     key: '8A',
+    energy: 6,
     duration: 180,
-    path: '/path/1.mp3',
+    filePath: '/path/1.mp3',
   };
 
   const track2: TrackDef = {
@@ -23,8 +24,9 @@ describe('GraphMap and TransitionOverlapStudio Node Connection', () => {
     artist: 'Artist 2',
     bpm: 126,
     key: '9A',
+    energy: 7,
     duration: 200,
-    path: '/path/2.mp3',
+    filePath: '/path/2.mp3',
   };
 
   it('renders TransitionOverlapStudio without throwing error for newly connected edge', () => {

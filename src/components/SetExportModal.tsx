@@ -20,6 +20,7 @@ interface SetExportModalProps {
   onClose: () => void;
   tracks: TrackDef[];
   transitions: TransitionConfig[];
+  trackStartTimes?: Record<string, number>;
   onSaveAsPlaylist: (name: string) => void;
   onImportProject?: (tracks: TrackDef[], transitions: TransitionConfig[]) => void;
 }
@@ -29,6 +30,7 @@ export default function SetExportModal({
   onClose,
   tracks,
   transitions,
+  trackStartTimes,
   onSaveAsPlaylist,
   onImportProject,
 }: SetExportModalProps) {
@@ -42,6 +44,34 @@ export default function SetExportModal({
 
   if (!isOpen) return null;
 
+  // Resolve timeline start times for each track (either from timeline layout or transition cues)
+  const getResolvedTrackStartTimes = (): number[] => {
+    const resolved: number[] = [];
+    for (let i = 0; i < tracks.length; i++) {
+      const t = tracks[i];
+      if (trackStartTimes && trackStartTimes[t.id] !== undefined) {
+        resolved.push(trackStartTimes[t.id]);
+      } else if (i === 0) {
+        resolved.push(0);
+      } else {
+        const prevTrack = tracks[i - 1];
+        const prevStart = resolved[i - 1];
+        const prevDur = prevTrack.duration || 180;
+        const trans = transitions.find(
+          tr => (tr.sourceTrackId === prevTrack.id && tr.targetTrackId === t.id) || tr.sourceTrackId === prevTrack.id
+        );
+        const bpmA = prevTrack.bpm || 130;
+        const transDurSec = ((trans?.durationBeats ?? 32) * 60) / bpmA;
+        const sourceTimeSec = trans?.sourceTimeSec !== undefined ? trans.sourceTimeSec : Math.max(0, prevDur - transDurSec);
+        const targetTimeSec = trans?.targetTimeSec !== undefined ? trans.targetTimeSec : 0;
+        const calculatedStart = Math.max(0, prevStart + sourceTimeSec - targetTimeSec);
+        resolved.push(calculatedStart);
+      }
+    }
+    return resolved;
+  };
+
+  const resolvedStartTimes = getResolvedTrackStartTimes();
   const totalDurationSec = tracks.reduce((acc, t) => acc + (t.duration || 180), 0);
 
   const formatTime = (totalSeconds: number) => {
@@ -84,9 +114,8 @@ export default function SetExportModal({
     content += `Tracks: ${tracks.length} | Gesamtdauer: ${formatTime(totalDurationSec)}\n`;
     content += `=====================================================\n\n`;
 
-    let currentStartSec = 0;
-
     tracks.forEach((track, idx) => {
+      const currentStartSec = resolvedStartTimes[idx] ?? 0;
       const trackNum = (idx + 1).toString().padStart(2, '0');
       const startMin = Math.floor(currentStartSec / 60).toString().padStart(2, '0');
       const startSec = Math.floor(currentStartSec % 60).toString().padStart(2, '0');
@@ -96,20 +125,6 @@ export default function SetExportModal({
       const durStr = formatTime(track.duration || 0);
 
       content += `${trackNum}. ${timestamp} ${track.artist || 'Unknown'} - ${track.title} (${bpmStr}${keyStr ? ' | ' + keyStr : ''} | ${durStr})\n`;
-
-      const duration = track.duration || 180;
-      if (idx < tracks.length - 1) {
-        const nextTrack = tracks[idx + 1];
-        const trans = transitions.find(
-          t => (t.sourceTrackId === track.id && t.targetTrackId === nextTrack.id) || t.sourceTrackId === track.id
-        );
-        const bpm = track.bpm || 130;
-        const beats = trans ? trans.durationBeats : 32;
-        const transSec = beats * (60 / bpm);
-        currentStartSec += Math.max(0, duration - transSec);
-      } else {
-        currentStartSec += duration;
-      }
     });
 
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
@@ -126,9 +141,8 @@ export default function SetExportModal({
     content += `TITLE "${playlistName}"\n`;
     content += `FILE "DJ_Set.mp3" MP3\n`;
 
-    let currentStartSec = 0;
-
     tracks.forEach((track, idx) => {
+      const currentStartSec = resolvedStartTimes[idx] ?? 0;
       const trackNum = (idx + 1).toString().padStart(2, '0');
       const startMin = Math.floor(currentStartSec / 60).toString().padStart(2, '0');
       const startSec = Math.floor(currentStartSec % 60).toString().padStart(2, '0');
@@ -138,21 +152,6 @@ export default function SetExportModal({
       content += `    TITLE "${track.title}"\n`;
       content += `    PERFORMER "${track.artist}"\n`;
       content += `    INDEX 01 ${startMin}:${startSec}:${startFrames}\n`;
-
-      // Advance time for next track based on transition duration
-      const duration = track.duration || 180;
-      if (idx < tracks.length - 1) {
-        const nextTrack = tracks[idx + 1];
-        const trans = transitions.find(
-          t => t.sourceTrackId === track.id && t.targetTrackId === nextTrack.id
-        ) || transitions.find(t => t.sourceTrackId === track.id);
-        const bpm = track.bpm || 130;
-        const beats = trans ? trans.durationBeats : 32;
-        const transSec = beats * (60 / bpm);
-        currentStartSec += Math.max(0, duration - transSec);
-      } else {
-        currentStartSec += duration;
-      }
     });
 
     const blob = new Blob([content], { type: 'application/x-cue;charset=utf-8' });
@@ -228,85 +227,328 @@ export default function SetExportModal({
     return new Blob([arrayBuffer], { type: 'audio/wav' });
   };
 
-  // Full Audio Mix Export (.wav) using Web Audio OfflineAudioContext
+  // Full Audio Mix Export using Web Audio OfflineAudioContext with 3-band EQ & Tempo Sync
   const handleExportWav = async () => {
     if (tracks.length === 0 || isExportingWav) return;
     setIsExportingWav(true);
-    setWavProgress(10);
+    setWavProgress(5);
 
     try {
-      let totalSec = 0;
+      const resolvedStartTimes = getResolvedTrackStartTimes();
+
+      // Find overall set duration
+      let maxEndSec = 0;
       for (let i = 0; i < tracks.length; i++) {
+        const start = resolvedStartTimes[i];
         const dur = tracks[i].duration || 180;
-        const next = tracks[i + 1];
-        let transDur = 0;
-        if (next) {
-          const trans = transitions.find(
-            t => (t.sourceTrackId === tracks[i].id && t.targetTrackId === next.id) || t.sourceTrackId === tracks[i].id
-          );
-          const bpm = tracks[i].bpm || 130;
-          transDur = (trans ? trans.durationBeats : 32) * (60 / bpm);
+        if (start + dur > maxEndSec) {
+          maxEndSec = start + dur;
         }
-        totalSec = next ? totalSec + dur - transDur : totalSec + dur;
       }
-      totalSec = Math.max(10, Math.min(totalSec, 7200));
-
+      const totalMixSec = Math.max(10, Math.min(maxEndSec + 2, 14400));
       const sampleRate = 44100;
-      const offlineCtx = new OfflineAudioContext(2, Math.round(sampleRate * Math.min(totalSec, 3600)), sampleRate);
+      const offlineCtx = new OfflineAudioContext(
+        2,
+        Math.round(sampleRate * totalMixSec),
+        sampleRate
+      );
 
-      let currentStart = 0;
+      // Render tracks sequentially with Web Audio automation
       for (let i = 0; i < tracks.length; i++) {
         const track = tracks[i];
+        const trackStartSec = resolvedStartTimes[i];
         const dur = track.duration || 180;
-        const next = tracks[i + 1];
-        let transDur = 0;
-        if (next) {
-          const trans = transitions.find(
-            t => (t.sourceTrackId === track.id && t.targetTrackId === next.id) || t.sourceTrackId === track.id
-          );
-          const bpm = track.bpm || 130;
-          transDur = (trans ? trans.durationBeats : 32) * (60 / bpm);
-        }
+        const bpmSelf = track.bpm || 130;
 
-        setWavProgress(Math.round(20 + (i / tracks.length) * 50));
+        setWavProgress(Math.round(10 + (i / tracks.length) * 60));
 
-        const audioUrl = track.url || (track.filePath ? `/api/library/stream?file=${encodeURIComponent(track.filePath)}` : null);
-        if (audioUrl) {
+        // Find incoming and outgoing transitions
+        const inTrans = i > 0
+          ? transitions.find(t => (t.sourceTrackId === tracks[i - 1].id && t.targetTrackId === track.id) || t.sourceTrackId === tracks[i - 1].id)
+          : undefined;
+
+        const outTrans = i < tracks.length - 1
+          ? transitions.find(t => (t.sourceTrackId === track.id && t.targetTrackId === tracks[i + 1].id) || t.sourceTrackId === track.id)
+          : undefined;
+
+        // Fetch / acquire AudioBuffer
+        let buffer: AudioBuffer | null = track.deepAnalysis?.audioBuffer || null;
+        if (!buffer && track.file) {
           try {
-            const res = await fetch(audioUrl);
-            if (res.ok) {
-              const arr = await res.arrayBuffer();
-              const decoded = await offlineCtx.decodeAudioData(arr);
-              const srcNode = offlineCtx.createBufferSource();
-              srcNode.buffer = decoded;
-
-              const gainNode = offlineCtx.createGain();
-              gainNode.gain.setValueAtTime(1.0, currentStart);
-              if (next && transDur > 0) {
-                gainNode.gain.setValueAtTime(1.0, currentStart + dur - transDur);
-                gainNode.gain.linearRampToValueAtTime(0.0, currentStart + dur);
-              }
-
-              srcNode.connect(gainNode);
-              gainNode.connect(offlineCtx.destination);
-              srcNode.start(currentStart);
-            }
+            const ab = await track.file.arrayBuffer();
+            buffer = await offlineCtx.decodeAudioData(ab.slice(0));
           } catch (e) {
-            console.warn('Track audio fetch/decode skipped for WAV mix:', track.title, e);
+            console.warn('Track.file decode fallback:', track.title, e);
           }
         }
-        currentStart = next ? currentStart + dur - transDur : currentStart + dur;
+
+        if (!buffer) {
+          const urlsToTry: string[] = [];
+          if (track.filePath) {
+            urlsToTry.push(`/api/tracks/audio?path=${encodeURIComponent(track.filePath)}`);
+            urlsToTry.push(`/api/library/stream?file=${encodeURIComponent(track.filePath)}`);
+          }
+          if (track.url) {
+            urlsToTry.push(track.url);
+          }
+
+          for (const u of urlsToTry) {
+            try {
+              const res = await fetch(u);
+              if (res.ok) {
+                const ab = await res.arrayBuffer();
+                buffer = await offlineCtx.decodeAudioData(ab.slice(0));
+                break;
+              }
+            } catch (err) {
+              // try next
+            }
+          }
+        }
+
+        if (!buffer) {
+          console.warn('No audio buffer could be decoded for track:', track.title);
+          continue;
+        }
+
+        const srcNode = offlineCtx.createBufferSource();
+        srcNode.buffer = buffer;
+
+        // 3-band DJ EQ and Highpass filter
+        const lowFilter = offlineCtx.createBiquadFilter();
+        lowFilter.type = 'lowshelf';
+        lowFilter.frequency.value = 250;
+        lowFilter.gain.value = 0;
+
+        const midFilter = offlineCtx.createBiquadFilter();
+        midFilter.type = 'peaking';
+        midFilter.frequency.value = 1000;
+        midFilter.Q.value = 1.0;
+        midFilter.gain.value = 0;
+
+        const highFilter = offlineCtx.createBiquadFilter();
+        highFilter.type = 'highshelf';
+        highFilter.frequency.value = 2500;
+        highFilter.gain.value = 0;
+
+        const hpfFilter = offlineCtx.createBiquadFilter();
+        hpfFilter.type = 'highpass';
+        hpfFilter.frequency.value = 20;
+
+        const gainNode = offlineCtx.createGain();
+
+        // Connect chain: Source -> Low -> Mid -> High -> HPF -> Gain -> Destination
+        srcNode.connect(lowFilter);
+        lowFilter.connect(midFilter);
+        midFilter.connect(highFilter);
+        highFilter.connect(hpfFilter);
+        hpfFilter.connect(gainNode);
+        gainNode.connect(offlineCtx.destination);
+
+        // Calculate transition timings
+        let tInStart = 0;
+        let tInDur = 0;
+        let tInEnd = 0;
+        if (inTrans && i > 0) {
+          const bpmPrev = tracks[i - 1].bpm || 130;
+          tInDur = ((inTrans.durationBeats || 32) * 60) / bpmPrev;
+          const sourceTimeSec = inTrans.sourceTimeSec !== undefined
+            ? inTrans.sourceTimeSec
+            : Math.max(0, (tracks[i - 1].duration || 180) - tInDur);
+          tInStart = resolvedStartTimes[i - 1] + sourceTimeSec;
+          tInEnd = tInStart + tInDur;
+        }
+
+        let tOutStart = 0;
+        let tOutDur = 0;
+        let tOutEnd = 0;
+        if (outTrans) {
+          tOutDur = ((outTrans.durationBeats || 32) * 60) / bpmSelf;
+          const sourceTimeSec = outTrans.sourceTimeSec !== undefined
+            ? outTrans.sourceTimeSec
+            : Math.max(0, dur - tOutDur);
+          tOutStart = trackStartSec + sourceTimeSec;
+          tOutEnd = tOutStart + tOutDur;
+        }
+
+        // Apply gain & EQ automation
+        if (i === 0) {
+          gainNode.gain.setValueAtTime(1.0, 0);
+          lowFilter.gain.setValueAtTime(0, 0);
+          midFilter.gain.setValueAtTime(0, 0);
+          highFilter.gain.setValueAtTime(0, 0);
+          hpfFilter.frequency.setValueAtTime(20, 0);
+        } else {
+          // Track B remains muted until incoming transition starts
+          gainNode.gain.setValueAtTime(0.0001, 0);
+          if (tInStart > 0) {
+            gainNode.gain.setValueAtTime(0.0001, Math.max(0, tInStart - 0.05));
+          }
+
+          // In incoming transition (Track is Track B):
+          if (inTrans && inTrans.envelopes) {
+            const envs = inTrans.envelopes;
+            const beats = inTrans.durationBeats || 32;
+
+            // Volume B envelope
+            if (envs.volumeB && envs.volumeB.length > 0) {
+              envs.volumeB.forEach(pt => {
+                const t = tInStart + (pt.beat / beats) * tInDur;
+                gainNode.gain.linearRampToValueAtTime(Math.max(0.0001, Math.min(1.0, pt.value)), t);
+              });
+            } else {
+              gainNode.gain.setValueAtTime(0.0001, tInStart);
+              gainNode.gain.linearRampToValueAtTime(1.0, tInEnd);
+            }
+
+            // Low B envelope (dB)
+            if (envs.lowB && envs.lowB.length > 0) {
+              envs.lowB.forEach(pt => {
+                const t = tInStart + (pt.beat / beats) * tInDur;
+                const db = pt.value <= 0.05 ? -48 : (pt.value >= 0.95 ? 0 : 20 * Math.log10(pt.value));
+                lowFilter.gain.linearRampToValueAtTime(db, t);
+              });
+            }
+
+            // Mid B envelope (dB)
+            if (envs.midB && envs.midB.length > 0) {
+              envs.midB.forEach(pt => {
+                const t = tInStart + (pt.beat / beats) * tInDur;
+                const db = pt.value <= 0.05 ? -36 : (pt.value >= 0.95 ? 0 : 20 * Math.log10(pt.value));
+                midFilter.gain.linearRampToValueAtTime(db, t);
+              });
+            }
+
+            // High B envelope (dB)
+            if (envs.highB && envs.highB.length > 0) {
+              envs.highB.forEach(pt => {
+                const t = tInStart + (pt.beat / beats) * tInDur;
+                const db = pt.value <= 0.05 ? -36 : (pt.value >= 0.95 ? 0 : 20 * Math.log10(pt.value));
+                highFilter.gain.linearRampToValueAtTime(db, t);
+              });
+            }
+
+            // Filter sweep on incoming track
+            if (inTrans.preset === 'filter-sweep') {
+              hpfFilter.frequency.setValueAtTime(1000, tInStart);
+              hpfFilter.frequency.exponentialRampToValueAtTime(20, tInEnd);
+            }
+          } else {
+            gainNode.gain.setValueAtTime(0.0001, tInStart);
+            gainNode.gain.linearRampToValueAtTime(1.0, tInEnd);
+          }
+
+          // Neutralize after incoming transition
+          gainNode.gain.setValueAtTime(1.0, tInEnd);
+          lowFilter.gain.setValueAtTime(0, tInEnd);
+          midFilter.gain.setValueAtTime(0, tInEnd);
+          highFilter.gain.setValueAtTime(0, tInEnd);
+          hpfFilter.frequency.setValueAtTime(20, tInEnd);
+        }
+
+        // In outgoing transition (Track is Track A):
+        if (outTrans && outTrans.envelopes) {
+          const envs = outTrans.envelopes;
+          const beats = outTrans.durationBeats || 32;
+
+          gainNode.gain.setValueAtTime(1.0, tOutStart);
+          lowFilter.gain.setValueAtTime(0, tOutStart);
+          midFilter.gain.setValueAtTime(0, tOutStart);
+          highFilter.gain.setValueAtTime(0, tOutStart);
+
+          // Volume A envelope
+          if (envs.volumeA && envs.volumeA.length > 0) {
+            envs.volumeA.forEach(pt => {
+              const t = tOutStart + (pt.beat / beats) * tOutDur;
+              gainNode.gain.linearRampToValueAtTime(Math.max(0.0001, Math.min(1.0, pt.value)), t);
+            });
+          } else {
+            gainNode.gain.linearRampToValueAtTime(0.0001, tOutEnd);
+          }
+
+          // Low A envelope (dB)
+          if (envs.lowA && envs.lowA.length > 0) {
+            envs.lowA.forEach(pt => {
+              const t = tOutStart + (pt.beat / beats) * tOutDur;
+              const db = pt.value <= 0.05 ? -48 : (pt.value >= 0.95 ? 0 : 20 * Math.log10(pt.value));
+              lowFilter.gain.linearRampToValueAtTime(db, t);
+            });
+          }
+
+          // Mid A envelope (dB)
+          if (envs.midA && envs.midA.length > 0) {
+            envs.midA.forEach(pt => {
+              const t = tOutStart + (pt.beat / beats) * tOutDur;
+              const db = pt.value <= 0.05 ? -36 : (pt.value >= 0.95 ? 0 : 20 * Math.log10(pt.value));
+              midFilter.gain.linearRampToValueAtTime(db, t);
+            });
+          }
+
+          // High A envelope (dB)
+          if (envs.highA && envs.highA.length > 0) {
+            envs.highA.forEach(pt => {
+              const t = tOutStart + (pt.beat / beats) * tOutDur;
+              const db = pt.value <= 0.05 ? -36 : (pt.value >= 0.95 ? 0 : 20 * Math.log10(pt.value));
+              highFilter.gain.linearRampToValueAtTime(db, t);
+            });
+          }
+
+          // Filter sweep on outgoing track
+          if (outTrans.preset === 'filter-sweep') {
+            hpfFilter.frequency.setValueAtTime(20, tOutStart);
+            hpfFilter.frequency.exponentialRampToValueAtTime(1200, tOutEnd);
+          }
+
+          gainNode.gain.setValueAtTime(0.0001, tOutEnd);
+        } else if (i === tracks.length - 1) {
+          // Final track smooth fadeout at the end
+          const endT = trackStartSec + dur;
+          gainNode.gain.setValueAtTime(1.0, Math.max(0, endT - 3));
+          gainNode.gain.linearRampToValueAtTime(0.0001, endT);
+        }
+
+        // Tempo sync automation (playbackRate)
+        srcNode.playbackRate.setValueAtTime(1.0, 0);
+
+        if (inTrans && inTrans.tempoSync && i > 0) {
+          const bpmPrev = tracks[i - 1].bpm || 130;
+          const targetBpm = inTrans.targetBpm ?? ((bpmPrev + bpmSelf) / 2);
+          const syncRate = targetBpm / bpmSelf;
+          srcNode.playbackRate.setValueAtTime(syncRate, tInStart);
+          srcNode.playbackRate.setValueAtTime(syncRate, tInEnd);
+          // Ramp back to natural 1.0 tempo over 4 beats after transition
+          const rampSec = 4 * (60 / bpmSelf);
+          srcNode.playbackRate.linearRampToValueAtTime(1.0, tInEnd + rampSec);
+        }
+
+        if (outTrans && outTrans.tempoSync) {
+          const bpmNext = tracks[i + 1].bpm || 130;
+          const targetBpm = outTrans.targetBpm ?? ((bpmSelf + bpmNext) / 2);
+          const syncRate = targetBpm / bpmSelf;
+          // Ramp into target tempo 4 beats before transition
+          const rampSec = 4 * (60 / bpmSelf);
+          const tPreStart = Math.max(0, tOutStart - rampSec);
+          srcNode.playbackRate.setValueAtTime(1.0, tPreStart);
+          srcNode.playbackRate.linearRampToValueAtTime(syncRate, tOutStart);
+          srcNode.playbackRate.setValueAtTime(syncRate, tOutEnd);
+        }
+
+        // Schedule playback from the calculated timeline start
+        srcNode.start(trackStartSec, 0, dur);
+        if (outTrans) {
+          srcNode.stop(tOutEnd + 1.0);
+        }
       }
 
-      setWavProgress(85);
+      setWavProgress(75);
       const renderedBuffer = await offlineCtx.startRendering();
-      setWavProgress(98);
+      setWavProgress(95);
 
       const wavBlob = audioBufferToWav(renderedBuffer);
-      downloadBlob(wavBlob, `${playlistName.replace(/[^a-z0-9]/gi, '_')}_Mix.mp3`);
+      downloadBlob(wavBlob, `${playlistName.replace(/[^a-z0-9]/gi, '_')}_Mix.wav`);
       triggerSuccessFeedback('mp3');
     } catch (err) {
-      console.error('WAV export error:', err);
+      console.error('Master Audio Mix export error:', err);
     } finally {
       setIsExportingWav(false);
       setWavProgress(0);

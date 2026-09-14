@@ -655,8 +655,16 @@ export default function App() {
   // Playlists CRUD
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [isSetExportModalOpen, setIsSetExportModalOpen] = useState<boolean>(false);
+  const [exportTrackStartTimes, setExportTrackStartTimes] = useState<Record<string, number>>({});
   const [liveSetEvent, setLiveSetEvent] = useState<SetTimeUpdateEvent | null>(null);
   const [activeSetTrackIndex, setActiveSetTrackIndex] = useState<number>(0);
+
+  const handleOpenSetExport = (startTimes?: Record<string, number>) => {
+    if (startTimes && Object.keys(startTimes).length > 0) {
+      setExportTrackStartTimes(startTimes);
+    }
+    setIsSetExportModalOpen(true);
+  };
 
   const handleCreatePlaylist = (customTracks?: Track[]) => {
     if (!newPlaylistName.trim()) return;
@@ -1700,7 +1708,7 @@ export default function App() {
                 onTogglePlay={handleSetTogglePlay}
                 onAutomix={handleAutomix}
                 onTrackUpdated={(updated) => updateTrack(updated.id, updated)}
-                onOpenSetExport={() => setIsSetExportModalOpen(true)}
+                onOpenSetExport={handleOpenSetExport}
                 onSaveSetAsPlaylist={() => handleSaveSetAsPlaylist(`Set Playlist ${new Date().toLocaleDateString('de-DE')}`)}
               />
             </ErrorBoundary>
@@ -1717,7 +1725,7 @@ export default function App() {
         onPlayTrack={setCurrentTrack}
         isOpen={isSetPlaylistOpen}
         onToggleOpen={setIsSetPlaylistOpen}
-        onOpenSetExport={() => setIsSetExportModalOpen(true)}
+        onOpenSetExport={handleOpenSetExport}
         onSaveAsPlaylist={(name) => handleSaveSetAsPlaylist(name)}
       />
 
@@ -1744,6 +1752,7 @@ export default function App() {
         onClose={() => setIsSetExportModalOpen(false)}
         tracks={graphDisplayTracks}
         transitions={setTransitions}
+        trackStartTimes={exportTrackStartTimes}
         onSaveAsPlaylist={(name) => handleSaveSetAsPlaylist(name)}
         onImportProject={(importedTracks, importedTransitions) => {
           setPlaylist(importedTracks as Track[]);
@@ -1806,7 +1815,7 @@ export default function App() {
           isPlaying={isSetPlaying}
           onTogglePlay={handleSetTogglePlay}
           onSeek={handleSetSeek}
-          onOpenSetExport={() => setIsSetExportModalOpen(true)}
+          onOpenSetExport={handleOpenSetExport}
           onSaveSetAsPlaylist={() => handleSaveSetAsPlaylist(`Set Playlist ${new Date().toLocaleDateString('de-DE')}`)}
         />
       ) : (

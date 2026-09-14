@@ -26,7 +26,7 @@ interface GraphMapProps {
   onTogglePlay?: () => void;
   onAutomix?: (orderedTracks: Track[], newTransitions: TransitionConfig[]) => void;
   onTrackUpdated?: (track: Track) => void;
-  onOpenSetExport?: () => void;
+  onOpenSetExport?: (startTimes?: Record<string, number>) => void;
   onSaveSetAsPlaylist?: () => void;
 }
 

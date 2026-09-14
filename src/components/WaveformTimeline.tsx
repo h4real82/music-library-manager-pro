@@ -22,7 +22,7 @@ interface WaveformTimelineProps {
   onAutomix?: (orderedTracks: TrackDef[], newTransitions: TransitionConfig[]) => void;
   onTransitionsChange?: (transitions: TransitionConfig[]) => void;
   onTrackUpdated?: (track: TrackDef) => void;
-  onOpenSetExport?: () => void;
+  onOpenSetExport?: (startTimes?: Record<string, number>) => void;
   onSaveSetAsPlaylist?: () => void;
 }
 
@@ -200,6 +200,31 @@ export default function WaveformTimeline({
     return unsubscribe;
   }, []);
 
+  // Mouse wheel behavior:
+  // Over a track: zoom horizontally in/out
+  // Outside a track: scroll timeline vertically
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isOverTrack = Boolean(target?.closest('[data-track-lane="true"]'));
+
+      if (isOverTrack) {
+        e.preventDefault();
+        const zoomDelta = e.deltaY < 0 ? 0.15 : -0.15;
+        setZoomLevel(z => Math.max(0.4, Math.min(3.0, Math.round((z + zoomDelta) * 100) / 100)));
+      }
+      // If outside a track lane, do not preventDefault: browser naturally scrolls vertically!
+    };
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      container.removeEventListener('wheel', handleWheel);
+    };
+  }, []);
+
   // Persistent timeline start positions for each track (in seconds)
   const [trackStartTimes, setTrackStartTimes] = useState<Record<string, number>>({});
 
@@ -313,6 +338,15 @@ export default function WaveformTimeline({
     }
     return layouts;
   }, [tracks, transitions, trackStartTimes, draggingTrackId, activeDragDeltaSec]);
+
+  // Exportable map of track ID -> timeline start second
+  const calculatedTrackStartTimes: Record<string, number> = useMemo(() => {
+    const map: Record<string, number> = {};
+    trackLayouts.forEach(l => {
+      map[l.track.id] = l.startSec;
+    });
+    return map;
+  }, [trackLayouts]);
 
   // Compute unified transition overlap zones that span ACROSS BOTH LANES
   // The transition frame STAYS ANCHORED to Track A (source track)
@@ -806,9 +840,9 @@ export default function WaveformTimeline({
             const bpm = track.bpm || 130;
             const barSec = (60 / bpm) * 4;
             const snappedStart = Math.round(layout.startSec / barSec) * barSec;
-            setTrackOffsets(prev => ({
+            setTrackStartTimes(prev => ({
               ...prev,
-              [track.id]: snappedStart - layout.baselineStartSec,
+              [track.id]: snappedStart,
             }));
           },
         },
@@ -893,7 +927,7 @@ export default function WaveformTimeline({
           {onOpenSetExport && (
             <button
               id="btn-waveform-export-set"
-              onClick={onOpenSetExport}
+              onClick={() => onOpenSetExport(calculatedTrackStartTimes)}
               className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-[#161920] hover:bg-[#242936] text-cyan-300 hover:text-white text-xs font-mono font-bold border border-cyan-500/40 shadow-md transition-all hover:scale-105 active:scale-95"
               title="DJ Set exportieren (CUE Sheet, M3U8 Playlist, Projekt-Datei)"
             >
@@ -1019,6 +1053,8 @@ export default function WaveformTimeline({
               return (
                 <div 
                   key={track.id} 
+                  data-track-lane="true"
+                  data-track-id={track.id}
                   onContextMenu={(e) => handleTrackContextMenu(e, layout)}
                   className={`relative h-28 bg-[#12141A] border rounded-xl overflow-hidden group shadow-lg flex items-center transition-colors ${
                     isDraggingThis 
