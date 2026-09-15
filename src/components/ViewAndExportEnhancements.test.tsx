@@ -49,10 +49,13 @@ describe('View and Export Enhancements', () => {
       />
     );
 
-    // Verify exactly the 3 requested export options are present
+    // Verify export options and accessible attributes are present
     expect(html).toContain('Audio Mix (.mp3)');
     expect(html).toContain('M3U-Playliste (.m3u8)');
     expect(html).toContain('Trackliste (.txt)');
+    expect(html).toContain('aria-label="Audio Mix als 320k MP3 exportieren"');
+    expect(html).toContain('aria-label="Name des DJ Sets"');
+    expect(html).toContain('id="set-playlist-name"');
 
     // Verify CUE and JSON project export options are removed from export options
     expect(html).not.toContain('CUE-Sheet (.cue)');
