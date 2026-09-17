@@ -96,8 +96,9 @@ export default function DjFilters({
             }}
             className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-white transition-colors bg-[#0D0E12] px-2 py-0.5 rounded border border-[#242936]"
             title="Alle Filter zurücksetzen"
+            aria-label="Alle Filter zurücksetzen"
           >
-            <RotateCcw className="w-2.5 h-2.5" />
+            <RotateCcw className="w-2.5 h-2.5" aria-hidden="true" />
             <span>Reset</span>
           </button>
         )}
@@ -120,17 +121,20 @@ export default function DjFilters({
                 onClick={handleResetBpm}
                 className="text-gray-500 hover:text-white p-0.5"
                 title="BPM Filter zurücksetzen"
+                aria-label="BPM Filter zurücksetzen"
               >
-                <RotateCcw className="w-2.5 h-2.5" />
+                <RotateCcw className="w-2.5 h-2.5" aria-hidden="true" />
               </button>
             )}
           </div>
         </div>
 
         {/* Mode Toggle: Presets vs Target Pitch */}
-        <div className="flex bg-[#0D0E12] p-0.5 rounded-lg border border-[#242936] mb-2.5">
+        <div className="flex bg-[#0D0E12] p-0.5 rounded-lg border border-[#242936] mb-2.5" role="group" aria-label="BPM Filter Modus">
           <button
             onClick={() => setBpmMode('presets')}
+            aria-pressed={bpmMode === 'presets'}
+            aria-label="Presets Modus aktivieren"
             className={`flex-1 py-1 rounded text-[10px] font-bold transition-all ${
               bpmMode === 'presets'
                 ? 'bg-[#242936] text-white shadow-sm'
@@ -141,13 +145,15 @@ export default function DjFilters({
           </button>
           <button
             onClick={() => setBpmMode('target')}
+            aria-pressed={bpmMode === 'target'}
+            aria-label="Target Pitch Modus aktivieren"
             className={`flex-1 py-1 rounded text-[10px] font-bold transition-all flex items-center justify-center gap-1 ${
               bpmMode === 'target'
                 ? 'bg-[#242936] text-white shadow-sm'
                 : 'text-gray-500 hover:text-gray-300'
             }`}
           >
-            <Target className="w-2.5 h-2.5 text-[#22C55E]" />
+            <Target className="w-2.5 h-2.5 text-[#22C55E]" aria-hidden="true" />
             <span>Target ± Pitch</span>
           </button>
         </div>
@@ -161,6 +167,8 @@ export default function DjFilters({
                 <button
                   key={p.label}
                   onClick={() => onBpmRangeChange(p.range)}
+                  aria-pressed={active}
+                  aria-label={`BPM Preset ${p.label} (${p.sub} BPM)`}
                   className={`py-1.5 px-2 rounded-lg text-center transition-all border ${
                     active
                       ? 'bg-[#22C55E]/15 border-[#22C55E] text-white font-bold shadow-[0_0_10px_rgba(34,197,94,0.2)]'
@@ -183,6 +191,7 @@ export default function DjFilters({
                 min="60"
                 max="200"
                 value={targetBpm}
+                aria-label="Ziel BPM"
                 onChange={(e) => {
                   const val = parseInt(e.target.value, 10);
                   if (!isNaN(val)) {
@@ -191,11 +200,13 @@ export default function DjFilters({
                 }}
                 className="w-16 bg-[#0D0E12] border border-[#242936] focus:border-[#22C55E] rounded px-2 py-1 text-xs font-mono text-white text-center outline-none"
               />
-              <div className="flex items-center gap-1 flex-1">
+              <div className="flex items-center gap-1 flex-1" role="group" aria-label="BPM Toleranz in Prozent">
                 {[2, 4, 8, 16].map((pct) => (
                   <button
                     key={pct}
                     onClick={() => handleTargetToleranceApply(targetBpm, pct)}
+                    aria-pressed={targetTolerancePct === pct && isBpmFiltered}
+                    aria-label={`BPM Toleranz ±${pct}%`}
                     className={`flex-1 py-1 rounded text-[10px] font-mono font-bold transition-all border ${
                       targetTolerancePct === pct && isBpmFiltered
                         ? 'bg-[#22C55E]/20 border-[#22C55E] text-[#22C55E]'
@@ -221,6 +232,7 @@ export default function DjFilters({
             min="60"
             max={bpmRange[1]}
             value={bpmRange[0]}
+            aria-label="Mindest-BPM"
             onChange={(e) => {
               const min = Math.max(60, Math.min(parseInt(e.target.value, 10) || 60, bpmRange[1]));
               onBpmRangeChange([min, bpmRange[1]]);
@@ -234,6 +246,7 @@ export default function DjFilters({
             min={bpmRange[0]}
             max="200"
             value={bpmRange[1]}
+            aria-label="Maximal-BPM"
             onChange={(e) => {
               const max = Math.min(200, Math.max(parseInt(e.target.value, 10) || 200, bpmRange[0]));
               onBpmRangeChange([bpmRange[0], max]);
@@ -260,8 +273,9 @@ export default function DjFilters({
                 onClick={handleResetEnergy}
                 className="text-gray-500 hover:text-white p-0.5"
                 title="Energy Filter zurücksetzen"
+                aria-label="Energy Filter zurücksetzen"
               >
-                <RotateCcw className="w-2.5 h-2.5" />
+                <RotateCcw className="w-2.5 h-2.5" aria-hidden="true" />
               </button>
             )}
           </div>
@@ -284,6 +298,8 @@ export default function DjFilters({
                       onEnergyRangeChange([level, level]);
                     }
                   }}
+                  aria-pressed={isSelected}
+                  aria-label={`Energy Level ${level} von 10`}
                   className={`flex-1 rounded-sm transition-all relative group flex flex-col justify-end ${
                     isSelected ? 'opacity-100 ring-1 ring-white/50' : 'opacity-25 hover:opacity-75'
                   }`}
@@ -316,6 +332,8 @@ export default function DjFilters({
               <button
                 key={p.label}
                 onClick={() => onEnergyRangeChange(p.range)}
+                aria-pressed={active}
+                aria-label={`Energy Preset ${p.label}`}
                 className={`py-1 px-1.5 rounded-lg text-center transition-all border text-[10px] font-medium ${
                   active
                     ? 'bg-[#A855F7]/20 border-[#A855F7] text-white font-bold shadow-[0_0_10px_rgba(168,85,247,0.2)]'
