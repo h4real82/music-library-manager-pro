@@ -1,1 +1,3 @@
-# Palette's Journal - Critical UX & Accessibility Learnings
+## 2025-05-18 - Dialog Accessibility and Selection State Semantics
+**Learning:** Modal dialogs with selection options (such as performance profiles) require proper dialog ARIA attributes (`role="dialog"`, `aria-modal="true"`, `aria-labelledby`) as well as explicit `aria-pressed` states on selectable buttons to communicate active state changes to screen reader users. Additionally, supporting keyboard dismissal (`Escape` key) and backdrop click dismissal improves modal UX for keyboard and mouse navigation alike.
+**Action:** Always include dialog ARIA attributes, selection button ARIA states (`aria-pressed`), and Escape key handlers when building modal settings dialogs.
