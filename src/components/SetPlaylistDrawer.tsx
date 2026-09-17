@@ -199,7 +199,8 @@ export default function SetPlaylistDrawer({
         <button
           id="btn-open-set-playlist"
           onClick={() => setOpen(true)}
-          className="pointer-events-auto bg-[#161920] hover:bg-[#242936] text-white border-l border-y border-[#242936] hover:border-[#A855F7]/50 rounded-l-2xl py-4 px-2.5 flex flex-col items-center gap-3 shadow-2xl transition-all hover:translate-x-[-2px] group"
+          aria-label="Set Playlist öffnen"
+          className="pointer-events-auto bg-[#161920] hover:bg-[#242936] text-white border-l border-y border-[#242936] hover:border-[#A855F7]/50 rounded-l-2xl py-4 px-2.5 flex flex-col items-center gap-3 shadow-2xl transition-all hover:translate-x-[-2px] focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none group"
           title="Set Playlist öffnen"
         >
           <div className="p-1.5 rounded-lg bg-[#A855F7]/20 text-[#A855F7] group-hover:scale-110 transition-transform">
@@ -252,7 +253,8 @@ export default function SetPlaylistDrawer({
           <button
             id="btn-close-set-playlist"
             onClick={() => setOpen(false)}
-            className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-[#242936] transition-colors"
+            aria-label="Set Playlist einklappen"
+            className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-[#242936] transition-colors focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none"
             title="Set Playlist einklappen"
           >
             <ChevronRight className="w-5 h-5" />
@@ -327,7 +329,8 @@ export default function SetPlaylistDrawer({
             <button
               onClick={handleExportM3U}
               disabled={playlist.length === 0}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-[#0D0E12] hover:bg-[#242936] text-gray-300 hover:text-white border border-[#242936] disabled:opacity-40 transition-colors"
+              aria-label="Playlist als M3U-Datei herunterladen"
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-[#0D0E12] hover:bg-[#242936] text-gray-300 hover:text-white border border-[#242936] disabled:opacity-40 transition-colors focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none"
               title="Playlist als M3U-Datei herunterladen"
             >
               <Download className="w-3 h-3 text-[#06B6D4]" />
@@ -339,7 +342,8 @@ export default function SetPlaylistDrawer({
                 id="btn-drawer-open-export"
                 onClick={onOpenSetExport}
                 disabled={playlist.length === 0}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-[#0D0E12] hover:bg-[#242936] text-cyan-300 hover:text-white border border-cyan-500/40 disabled:opacity-40 transition-colors"
+                aria-label="CUE Sheet, M3U8 und Projekt-Export öffnen"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-[#0D0E12] hover:bg-[#242936] text-cyan-300 hover:text-white border border-cyan-500/40 disabled:opacity-40 transition-colors focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none"
                 title="CUE Sheet, M3U8 und Projekt-Export öffnen"
               >
                 <Download className="w-3 h-3 text-cyan-400" />
@@ -352,7 +356,8 @@ export default function SetPlaylistDrawer({
                 id="btn-drawer-save-playlist"
                 onClick={() => onSaveAsPlaylist(`DJ Set Playlist ${new Date().toLocaleDateString('de-DE')}`)}
                 disabled={playlist.length === 0}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-[#0D0E12] hover:bg-[#242936] text-purple-300 hover:text-white border border-purple-500/40 disabled:opacity-40 transition-colors"
+                aria-label="In linker Sidebar als Playlist ablegen"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-[#0D0E12] hover:bg-[#242936] text-purple-300 hover:text-white border border-purple-500/40 disabled:opacity-40 transition-colors focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none"
                 title="In linker Sidebar als Playlist ablegen"
               >
                 <Bookmark className="w-3 h-3 text-purple-400" />
@@ -363,7 +368,8 @@ export default function SetPlaylistDrawer({
             <button
               onClick={handleCopyTracklist}
               disabled={playlist.length === 0}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-[#0D0E12] hover:bg-[#242936] text-gray-300 hover:text-white border border-[#242936] disabled:opacity-40 transition-colors"
+              aria-label="Trackliste in Zwischenablage kopieren"
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-[#0D0E12] hover:bg-[#242936] text-gray-300 hover:text-white border border-[#242936] disabled:opacity-40 transition-colors focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none"
               title="Trackliste in Zwischenablage kopieren"
             >
               {copiedTracklist ? <Check className="w-3 h-3 text-[#22C55E]" /> : <Copy className="w-3 h-3 text-[#A855F7]" />}
@@ -377,13 +383,15 @@ export default function SetPlaylistDrawer({
               <div className="flex items-center gap-1">
                 <button
                   onClick={handleClearPlaylist}
-                  className="px-2 py-0.5 rounded bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold transition-colors"
+                  aria-label="Set Playlist leeren bestätigen"
+                  className="px-2 py-0.5 rounded bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold transition-colors focus-visible:ring-2 focus-visible:ring-red-400 focus-visible:outline-none"
                 >
                   Ja, leeren
                 </button>
                 <button
                   onClick={() => setShowClearConfirm(false)}
-                  className="px-1.5 py-0.5 rounded text-gray-400 hover:text-white text-[9px]"
+                  aria-label="Leeren abbrechen"
+                  className="px-1.5 py-0.5 rounded text-gray-400 hover:text-white text-[9px] focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none"
                 >
                   Nein
                 </button>
@@ -391,7 +399,8 @@ export default function SetPlaylistDrawer({
             ) : (
               <button
                 onClick={() => setShowClearConfirm(true)}
-                className="text-gray-500 hover:text-red-400 p-1 rounded hover:bg-red-500/10 transition-colors"
+                aria-label="Set Playlist leeren"
+                className="text-gray-500 hover:text-red-400 p-1 rounded hover:bg-red-500/10 transition-colors focus-visible:ring-2 focus-visible:ring-red-400 focus-visible:outline-none"
                 title="Set Playlist leeren"
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -434,8 +443,10 @@ export default function SetPlaylistDrawer({
                   </span>
 
                   {/* Play Button / Cover Art */}
-                  <div 
-                    className="relative w-9 h-9 rounded-lg overflow-hidden shrink-0 cursor-pointer bg-[#161920] flex items-center justify-center"
+                  <button
+                    type="button"
+                    aria-label={`${isPlayingThis ? 'Pause' : 'Abspielen'} ${track.title}`}
+                    className="relative w-9 h-9 rounded-lg overflow-hidden shrink-0 cursor-pointer bg-[#161920] flex items-center justify-center focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none"
                     onClick={() => onPlayTrack(track)}
                   >
                     {track.coverArt ? (
@@ -452,7 +463,7 @@ export default function SetPlaylistDrawer({
                         <Play className="w-3.5 h-3.5 text-white drop-shadow ml-0.5 opacity-80 group-hover:opacity-100" />
                       )}
                     </div>
-                  </div>
+                  </button>
 
                   {/* Track Details */}
                   <div className="flex-1 min-w-0">
@@ -474,12 +485,13 @@ export default function SetPlaylistDrawer({
                     </span>
                   </div>
 
-                  {/* Reorder / Remove Controls (Hover) */}
-                  <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-1">
+                  {/* Reorder / Remove Controls (Hover & Focus) */}
+                  <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shrink-0 ml-1">
                     <button
                       onClick={() => moveTrack(i, 'up')}
                       disabled={i === 0}
-                      className="p-1 rounded text-gray-400 hover:text-white hover:bg-[#161920] disabled:opacity-20 disabled:hover:text-gray-400 transition-colors"
+                      aria-label={`${track.title} nach oben verschieben`}
+                      className="p-1 rounded text-gray-400 hover:text-white hover:bg-[#161920] disabled:opacity-20 disabled:hover:text-gray-400 transition-colors focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none"
                       title="Nach oben"
                     >
                       <ArrowUp className="w-2.5 h-2.5" />
@@ -487,14 +499,16 @@ export default function SetPlaylistDrawer({
                     <button
                       onClick={() => moveTrack(i, 'down')}
                       disabled={i === playlist.length - 1}
-                      className="p-1 rounded text-gray-400 hover:text-white hover:bg-[#161920] disabled:opacity-20 disabled:hover:text-gray-400 transition-colors"
+                      aria-label={`${track.title} nach unten verschieben`}
+                      className="p-1 rounded text-gray-400 hover:text-white hover:bg-[#161920] disabled:opacity-20 disabled:hover:text-gray-400 transition-colors focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none"
                       title="Nach unten"
                     >
                       <ArrowDown className="w-2.5 h-2.5" />
                     </button>
                     <button
                       onClick={() => removeTrack(i)}
-                      className="p-1 rounded text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                      aria-label={`${track.title} aus Playlist entfernen`}
+                      className="p-1 rounded text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-colors focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:outline-none"
                       title="Aus Playlist entfernen"
                     >
                       <Trash2 className="w-2.5 h-2.5" />
