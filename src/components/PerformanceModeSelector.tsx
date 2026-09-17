@@ -20,6 +20,17 @@ export default function PerformanceModeSelector({ isOpen, onClose }: Performance
     return unsubscribe;
   }, []);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const handleSelectMode = (newMode: PerformanceProfileMode) => {
@@ -28,8 +39,17 @@ export default function PerformanceModeSelector({ isOpen, onClose }: Performance
   };
 
   return (
-    <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150">
-      <div className="bg-[#12151D] border border-[#2A3245] rounded-2xl w-full max-w-xl shadow-[0_16px_64px_rgba(0,0,0,0.8)] overflow-hidden">
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150"
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="perf-modal-title"
+        onClick={(e) => e.stopPropagation()}
+        className="bg-[#12151D] border border-[#2A3245] rounded-2xl w-full max-w-xl shadow-[0_16px_64px_rgba(0,0,0,0.8)] overflow-hidden"
+      >
         
         {/* Header */}
         <div className="px-6 py-4 bg-[#0A0C10] border-b border-[#242936] flex items-center justify-between">
@@ -38,7 +58,7 @@ export default function PerformanceModeSelector({ isOpen, onClose }: Performance
               <Cpu className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-white uppercase tracking-wider">System-Performance & Grafik-Skalierung</h3>
+              <h3 id="perf-modal-title" className="text-sm font-bold text-white uppercase tracking-wider">System-Performance & Grafik-Skalierung</h3>
               <p className="text-[11px] text-gray-400">Passe die Anwendungsleistung dynamisch an deine System-Hardware an</p>
             </div>
           </div>
@@ -87,8 +107,10 @@ export default function PerformanceModeSelector({ isOpen, onClose }: Performance
             
             {/* 1. AUTO DETECT */}
             <button
+              type="button"
               onClick={() => handleSelectMode('auto')}
-              className={`w-full p-3.5 rounded-xl border text-left transition-all flex items-center justify-between ${
+              aria-pressed={mode === 'auto'}
+              className={`w-full p-3.5 rounded-xl border text-left transition-all flex items-center justify-between focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none ${
                 mode === 'auto'
                   ? 'bg-purple-900/30 border-purple-500/80 shadow-[0_0_20px_rgba(168,85,247,0.2)] text-white'
                   : 'bg-[#161920] border-[#242936] text-gray-400 hover:text-white hover:border-gray-700'
@@ -109,8 +131,10 @@ export default function PerformanceModeSelector({ isOpen, onClose }: Performance
 
             {/* 2. ULTRA PERFORMANCE */}
             <button
+              type="button"
               onClick={() => handleSelectMode('ultra')}
-              className={`w-full p-3.5 rounded-xl border text-left transition-all flex items-center justify-between ${
+              aria-pressed={mode === 'ultra'}
+              className={`w-full p-3.5 rounded-xl border text-left transition-all flex items-center justify-between focus-visible:ring-2 focus-visible:ring-cyan-500 focus-visible:outline-none ${
                 mode === 'ultra'
                   ? 'bg-cyan-900/30 border-cyan-500/80 shadow-[0_0_20px_rgba(6,182,212,0.2)] text-white'
                   : 'bg-[#161920] border-[#242936] text-gray-400 hover:text-white hover:border-gray-700'
@@ -131,8 +155,10 @@ export default function PerformanceModeSelector({ isOpen, onClose }: Performance
 
             {/* 3. BALANCED */}
             <button
+              type="button"
               onClick={() => handleSelectMode('balanced')}
-              className={`w-full p-3.5 rounded-xl border text-left transition-all flex items-center justify-between ${
+              aria-pressed={mode === 'balanced'}
+              className={`w-full p-3.5 rounded-xl border text-left transition-all flex items-center justify-between focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:outline-none ${
                 mode === 'balanced'
                   ? 'bg-amber-900/30 border-amber-500/80 shadow-[0_0_20px_rgba(245,158,11,0.2)] text-white'
                   : 'bg-[#161920] border-[#242936] text-gray-400 hover:text-white hover:border-gray-700'
@@ -153,8 +179,10 @@ export default function PerformanceModeSelector({ isOpen, onClose }: Performance
 
             {/* 4. POWER SAVER */}
             <button
+              type="button"
               onClick={() => handleSelectMode('power-saver')}
-              className={`w-full p-3.5 rounded-xl border text-left transition-all flex items-center justify-between ${
+              aria-pressed={mode === 'power-saver'}
+              className={`w-full p-3.5 rounded-xl border text-left transition-all flex items-center justify-between focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:outline-none ${
                 mode === 'power-saver'
                   ? 'bg-rose-900/30 border-rose-500/80 shadow-[0_0_20px_rgba(244,63,94,0.2)] text-white'
                   : 'bg-[#161920] border-[#242936] text-gray-400 hover:text-white hover:border-gray-700'
@@ -178,8 +206,9 @@ export default function PerformanceModeSelector({ isOpen, onClose }: Performance
         {/* Footer */}
         <div className="px-6 py-3 bg-[#0A0C10] border-t border-[#242936] flex justify-end">
           <button
+            type="button"
             onClick={onClose}
-            className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold font-mono transition-all shadow-md"
+            className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold font-mono transition-all shadow-md focus-visible:ring-2 focus-visible:ring-purple-400 focus-visible:outline-none"
           >
             Übernehmen & Schließen
           </button>
