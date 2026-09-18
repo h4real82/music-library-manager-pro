@@ -1,3 +1,3 @@
-## 2025-05-18 - Dialog Accessibility and Selection State Semantics
-**Learning:** Modal dialogs with selection options (such as performance profiles) require proper dialog ARIA attributes (`role="dialog"`, `aria-modal="true"`, `aria-labelledby`) as well as explicit `aria-pressed` states on selectable buttons to communicate active state changes to screen reader users. Additionally, supporting keyboard dismissal (`Escape` key) and backdrop click dismissal improves modal UX for keyboard and mouse navigation alike.
-**Action:** Always include dialog ARIA attributes, selection button ARIA states (`aria-pressed`), and Escape key handlers when building modal settings dialogs.
+## 2026-09-15 - Export Modals Accessibility & Keyboard Focus
+**Learning:** Adding explicit `htmlFor` label bindings, `aria-label` descriptors, and `focus-visible:ring-2` focus rings on modal action controls ensures complete keyboard navigation and screen reader clarity without altering visual design.
+**Action:** Always pair `htmlFor` with `id` on inputs in modal dialogs and ensure custom export/download action buttons have descriptive `aria-label` tags.

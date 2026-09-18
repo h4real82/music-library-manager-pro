@@ -636,10 +636,10 @@ export default function SetExportModal({
           {/* 1. SAVE IN APP AS PLAYLIST */}
           <div className="bg-[#161920]/80 border border-[#242936] rounded-xl p-4 flex flex-col gap-3">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-sm font-bold text-white">
+              <label htmlFor="set-playlist-name" className="flex items-center gap-2 text-sm font-bold text-white cursor-pointer">
                 <Bookmark className="w-4 h-4 text-purple-400" />
                 <span>Als Playliste in MuLiMa Pro speichern</span>
-              </div>
+              </label>
               <span className="text-[10px] font-mono text-gray-400 bg-[#0D0E12] px-2 py-0.5 rounded border border-[#242936]">
                 Erscheint in linker Seitenleiste
               </span>
@@ -647,15 +647,18 @@ export default function SetExportModal({
 
             <div className="flex items-center gap-2">
               <input
+                id="set-playlist-name"
                 type="text"
                 value={playlistName}
                 onChange={(e) => setPlaylistName(e.target.value)}
                 placeholder="Name des DJ Sets..."
-                className="flex-1 bg-[#0D0E12] border border-[#242936] rounded-xl px-3 py-2 text-xs text-white focus:border-purple-500 outline-none font-mono"
+                aria-label="Name des DJ Sets"
+                className="flex-1 bg-[#0D0E12] border border-[#242936] rounded-xl px-3 py-2 text-xs text-white focus:border-purple-500 focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none font-mono"
               />
               <button
                 onClick={handleSavePlaylist}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-mono font-bold transition-all shadow-md ${
+                aria-label="Playliste in MuLiMa Pro speichern"
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-mono font-bold transition-all shadow-md focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none ${
                   isSavedPlaylist
                     ? 'bg-emerald-600 text-white'
                     : 'bg-purple-600 hover:bg-purple-500 text-white active:scale-95'
@@ -693,7 +696,8 @@ export default function SetExportModal({
             <button
               onClick={() => handleExportAudio('mp3')}
               disabled={isExportingAudio}
-              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-amber-500/50 transition-all text-left shadow-lg relative overflow-hidden disabled:opacity-50"
+              aria-label="Audio Mix als 320k MP3 exportieren"
+              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-amber-500/50 transition-all text-left shadow-lg relative overflow-hidden disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none"
             >
               <div className="flex items-center justify-between w-full mb-2.5">
                 <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/30 group-hover:scale-110 transition-transform">
@@ -720,7 +724,8 @@ export default function SetExportModal({
             <button
               onClick={() => handleExportAudio('wav')}
               disabled={isExportingAudio}
-              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-emerald-500/50 transition-all text-left shadow-lg relative overflow-hidden disabled:opacity-50"
+              aria-label="Studio Master als 16-Bit WAV exportieren"
+              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-emerald-500/50 transition-all text-left shadow-lg relative overflow-hidden disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none"
             >
               <div className="flex items-center justify-between w-full mb-2.5">
                 <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 group-hover:scale-110 transition-transform">
@@ -746,7 +751,8 @@ export default function SetExportModal({
             {/* M3U8 Playlist Export */}
             <button
               onClick={handleExportM3U}
-              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-purple-500/50 transition-all text-left shadow-lg relative overflow-hidden"
+              aria-label="M3U-Playliste exportieren"
+              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-purple-500/50 transition-all text-left shadow-lg relative overflow-hidden focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none"
             >
               <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/30 mb-2.5 group-hover:scale-110 transition-transform">
                 <Music className="w-4 h-4" />
@@ -765,7 +771,8 @@ export default function SetExportModal({
             {/* Text Tracklist Export (.txt) */}
             <button
               onClick={handleExportTxt}
-              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-cyan-500/50 transition-all text-left shadow-lg relative overflow-hidden"
+              aria-label="Trackliste als Textdatei exportieren"
+              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-cyan-500/50 transition-all text-left shadow-lg relative overflow-hidden focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none"
             >
               <div className="p-2 rounded-lg bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 mb-2.5 group-hover:scale-110 transition-transform">
                 <FileText className="w-4 h-4" />
