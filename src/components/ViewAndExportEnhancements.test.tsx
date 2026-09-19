@@ -38,7 +38,7 @@ describe('View and Export Enhancements', () => {
     },
   ];
 
-  it('SetExportModal renders strictly MP3, Playlist, and TXT export options', () => {
+  it('SetExportModal renders strictly MP3, Playlist, and TXT export options with accessible dialog ARIA markup', () => {
     const html = renderToString(
       <SetExportModal
         isOpen={true}
@@ -49,10 +49,20 @@ describe('View and Export Enhancements', () => {
       />
     );
 
-    // Verify exactly the 3 requested export options are present
+    // Verify exactly the requested export options are present
     expect(html).toContain('Audio Mix (.mp3)');
     expect(html).toContain('M3U-Playliste (.m3u8)');
     expect(html).toContain('Trackliste (.txt)');
+
+    // Verify dialog accessibility attributes
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain('aria-modal="true"');
+    expect(html).toContain('aria-labelledby="export-modal-title"');
+    expect(html).toContain('id="export-modal-title"');
+
+    // Verify accessible form input
+    expect(html).toContain('id="playlist-name-input"');
+    expect(html).toContain('aria-label="Name des DJ Sets"');
 
     // Verify CUE and JSON project export options are removed from export options
     expect(html).not.toContain('CUE-Sheet (.cue)');

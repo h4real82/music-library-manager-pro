@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Download, 
   FileText, 
@@ -49,6 +49,17 @@ export default function SetExportModal({
   const [exportFormat, setExportFormat] = useState<'mp3' | 'wav'>('mp3');
   const [exportProgress, setExportProgress] = useState(0);
   const [exportStatusText, setExportStatusText] = useState('');
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -602,8 +613,17 @@ export default function SetExportModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 select-none animate-fadeIn">
-      <div className="bg-[#12141A] border border-[#242936] rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col">
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 select-none animate-fadeIn"
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="export-modal-title"
+        onClick={(e) => e.stopPropagation()}
+        className="bg-[#12141A] border border-[#242936] rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col"
+      >
         
         {/* MODAL HEADER */}
         <div className="flex items-center justify-between p-5 border-b border-[#242936] bg-[#161920]">
@@ -612,7 +632,7 @@ export default function SetExportModal({
               <Download className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <h3 id="export-modal-title" className="text-base font-bold text-white flex items-center gap-2">
                 <span>DJ Set Export & Playliste Speichern</span>
               </h3>
               <p className="text-xs text-gray-400 font-mono">
@@ -622,6 +642,7 @@ export default function SetExportModal({
           </div>
 
           <button 
+            type="button"
             onClick={onClose}
             aria-label="Close export set modal"
             className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-[#242936] transition-colors focus-visible:ring-2 focus-visible:ring-cyan-500 focus-visible:outline-none"
@@ -646,16 +667,23 @@ export default function SetExportModal({
             </div>
 
             <div className="flex items-center gap-2">
+              <label htmlFor="playlist-name-input" className="sr-only">
+                Name des DJ Sets
+              </label>
               <input
+                id="playlist-name-input"
                 type="text"
                 value={playlistName}
+                aria-label="Name des DJ Sets"
                 onChange={(e) => setPlaylistName(e.target.value)}
                 placeholder="Name des DJ Sets..."
-                className="flex-1 bg-[#0D0E12] border border-[#242936] rounded-xl px-3 py-2 text-xs text-white focus:border-purple-500 outline-none font-mono"
+                className="flex-1 bg-[#0D0E12] border border-[#242936] rounded-xl px-3 py-2 text-xs text-white focus:border-purple-500 focus-visible:ring-2 focus-visible:ring-purple-500 outline-none font-mono"
               />
               <button
+                type="button"
                 onClick={handleSavePlaylist}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-mono font-bold transition-all shadow-md ${
+                aria-label="Als Playliste speichern"
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-mono font-bold transition-all shadow-md focus-visible:ring-2 focus-visible:ring-purple-400 focus-visible:outline-none ${
                   isSavedPlaylist
                     ? 'bg-emerald-600 text-white'
                     : 'bg-purple-600 hover:bg-purple-500 text-white active:scale-95'
@@ -669,7 +697,11 @@ export default function SetExportModal({
 
           {/* ACTIVE AUDIO EXPORT PROGRESS BANNER */}
           {isExportingAudio && (
-            <div className="bg-[#161920] border border-amber-500/40 rounded-xl p-4 flex flex-col gap-2.5 animate-fadeIn shadow-lg">
+            <div
+              aria-live="polite"
+              aria-atomic="true"
+              className="bg-[#161920] border border-amber-500/40 rounded-xl p-4 flex flex-col gap-2.5 animate-fadeIn shadow-lg"
+            >
               <div className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2.5 text-amber-400 font-bold">
                   <div className="w-3.5 h-3.5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
@@ -691,9 +723,11 @@ export default function SetExportModal({
             
             {/* Audio Mix Export (.mp3) */}
             <button
+              type="button"
               onClick={() => handleExportAudio('mp3')}
               disabled={isExportingAudio}
-              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-amber-500/50 transition-all text-left shadow-lg relative overflow-hidden disabled:opacity-50"
+              aria-label="Audio Mix als 320k MP3 exportieren"
+              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-amber-500/50 transition-all text-left shadow-lg relative overflow-hidden disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:outline-none"
             >
               <div className="flex items-center justify-between w-full mb-2.5">
                 <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/30 group-hover:scale-110 transition-transform">
@@ -718,9 +752,11 @@ export default function SetExportModal({
 
             {/* Studio Master Export (.wav) */}
             <button
+              type="button"
               onClick={() => handleExportAudio('wav')}
               disabled={isExportingAudio}
-              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-emerald-500/50 transition-all text-left shadow-lg relative overflow-hidden disabled:opacity-50"
+              aria-label="Studio Master als 16-Bit WAV exportieren"
+              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-emerald-500/50 transition-all text-left shadow-lg relative overflow-hidden disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:outline-none"
             >
               <div className="flex items-center justify-between w-full mb-2.5">
                 <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 group-hover:scale-110 transition-transform">
@@ -745,8 +781,10 @@ export default function SetExportModal({
 
             {/* M3U8 Playlist Export */}
             <button
+              type="button"
               onClick={handleExportM3U}
-              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-purple-500/50 transition-all text-left shadow-lg relative overflow-hidden"
+              aria-label="M3U-Playliste exportieren"
+              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-purple-500/50 transition-all text-left shadow-lg relative overflow-hidden focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none"
             >
               <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/30 mb-2.5 group-hover:scale-110 transition-transform">
                 <Music className="w-4 h-4" />
@@ -764,8 +802,10 @@ export default function SetExportModal({
 
             {/* Text Tracklist Export (.txt) */}
             <button
+              type="button"
               onClick={handleExportTxt}
-              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-cyan-500/50 transition-all text-left shadow-lg relative overflow-hidden"
+              aria-label="Trackliste als Textdatei exportieren"
+              className="group flex flex-col items-start p-4 rounded-xl border border-[#242936] bg-[#161920]/60 hover:bg-[#1A1D26] hover:border-cyan-500/50 transition-all text-left shadow-lg relative overflow-hidden focus-visible:ring-2 focus-visible:ring-cyan-500 focus-visible:outline-none"
             >
               <div className="p-2 rounded-lg bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 mb-2.5 group-hover:scale-110 transition-transform">
                 <FileText className="w-4 h-4" />
@@ -806,8 +846,10 @@ export default function SetExportModal({
         {/* MODAL FOOTER */}
         <div className="p-4 border-t border-[#242936] bg-[#161920] flex items-center justify-end">
           <button
+            type="button"
             onClick={onClose}
-            className="px-4 py-1.5 rounded-xl text-xs font-mono font-bold text-gray-400 hover:text-white hover:bg-[#242936] transition-colors"
+            aria-label="Export Modal Schließen"
+            className="px-4 py-1.5 rounded-xl text-xs font-mono font-bold text-gray-400 hover:text-white hover:bg-[#242936] transition-colors focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none"
           >
             Schließen
           </button>
