@@ -616,11 +616,11 @@ export default function SetExportModal({
     <div
       role="dialog"
       aria-modal="true"
-      aria-labelledby="export-modal-title"
+      aria-labelledby="set-export-modal-title"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 select-none animate-fadeIn"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 select-none animate-fadeIn"
     >
       <div className="bg-[#12141A] border border-[#242936] rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col">
         
@@ -631,7 +631,7 @@ export default function SetExportModal({
               <Download className="w-5 h-5" />
             </div>
             <div>
-              <h3 id="export-modal-title" className="text-base font-bold text-white flex items-center gap-2">
+              <h3 id="set-export-modal-title" className="text-base font-bold text-white flex items-center gap-2">
                 <span>DJ Set Export & Playliste Speichern</span>
               </h3>
               <p className="text-xs text-gray-400 font-mono">
@@ -666,15 +666,18 @@ export default function SetExportModal({
 
             <div className="flex items-center gap-2">
               <input
+                id="export-playlist-name"
                 type="text"
                 value={playlistName}
                 onChange={(e) => setPlaylistName(e.target.value)}
                 placeholder="Name des DJ Sets..."
-                className="flex-1 bg-[#0D0E12] border border-[#242936] rounded-xl px-3 py-2 text-xs text-white focus:border-purple-500 outline-none font-mono"
+                aria-label="Name des DJ Sets"
+                className="flex-1 bg-[#0D0E12] border border-[#242936] rounded-xl px-3 py-2 text-xs text-white focus:border-purple-500 focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none outline-none font-mono"
               />
               <button
                 onClick={handleSavePlaylist}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-mono font-bold transition-all shadow-md ${
+                aria-label="Playliste in MuLiMa Pro speichern"
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-mono font-bold transition-all shadow-md focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none ${
                   isSavedPlaylist
                     ? 'bg-emerald-600 text-white'
                     : 'bg-purple-600 hover:bg-purple-500 text-white active:scale-95'
