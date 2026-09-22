@@ -57,6 +57,12 @@ describe('View and Export Enhancements', () => {
     // Verify CUE and JSON project export options are removed from export options
     expect(html).not.toContain('CUE-Sheet (.cue)');
     expect(html).not.toContain('Set-Projekt (.json)');
+
+    // Verify modal dialog accessibility attributes
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain('aria-modal="true"');
+    expect(html).toContain('aria-labelledby="export-modal-title"');
+    expect(html).toContain('id="export-modal-title"');
   });
 
   it('TrackMapper renders with BPM and Key as default axes and shows miniature cover artwork', () => {
