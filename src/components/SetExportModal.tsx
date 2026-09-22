@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Download, 
   FileText, 
@@ -49,6 +49,17 @@ export default function SetExportModal({
   const [exportFormat, setExportFormat] = useState<'mp3' | 'wav'>('mp3');
   const [exportProgress, setExportProgress] = useState(0);
   const [exportStatusText, setExportStatusText] = useState('');
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -602,7 +613,15 @@ export default function SetExportModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 select-none animate-fadeIn">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="export-modal-title"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 select-none animate-fadeIn"
+    >
       <div className="bg-[#12141A] border border-[#242936] rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col">
         
         {/* MODAL HEADER */}
@@ -612,7 +631,7 @@ export default function SetExportModal({
               <Download className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <h3 id="export-modal-title" className="text-base font-bold text-white flex items-center gap-2">
                 <span>DJ Set Export & Playliste Speichern</span>
               </h3>
               <p className="text-xs text-gray-400 font-mono">
